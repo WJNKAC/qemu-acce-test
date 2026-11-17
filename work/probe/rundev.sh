@@ -21,13 +21,21 @@
 set -uo pipefail
 SER=${SER:-3538956564001EV}
 D=/data/local/tmp
+# 跑哪个脚本：seedtest.sh（reboot 循环，跑到轮数）或 soak.sh（跑到时间）。
+# 两者的日志前缀不同（st- / soak-），别混。
+SCRIPT=${SCRIPT:-seedtest.sh}
+case "$SCRIPT" in
+    seedtest.sh) PFX=st ;;
+    soak.sh)     PFX=soak ;;
+    *) echo "SCRIPT 只支持 seedtest.sh / soak.sh（给的是 $SCRIPT）"; exit 2 ;;
+esac
 SUB=${1:?start|status|collect|clean}
 TAG=${2:?tag}
 shift 2
 
 adb_() { adb -s "$SER" "$@"; }
-HOUT=$D/st-$TAG.out
-HPID=$D/st-$TAG.pid
+HOUT=$D/$PFX-$TAG.out
+HPID=$D/$PFX-$TAG.pid
 
 case "$SUB" in
 start)
@@ -36,17 +44,18 @@ start)
     if [ -n "$OLD" ] && adb_ shell "kill -0 $OLD 2>/dev/null && echo alive" | grep -q alive; then
         echo "ABORT: tag=$TAG 已有进程在跑（PID=$OLD）。先 ./rundev.sh clean $TAG"; exit 2
     fi
-    RUNNING=$(adb_ shell 'ps -A -o ARGS 2>/dev/null | grep -c "[s]eedtest.sh"' | tr -d '\r')
+    # 门禁要查**两个**脚本：它们都抢 4460(QEMU monitor) 和 10080(host 监听)
+    RUNNING=$(adb_ shell 'ps -A -o ARGS 2>/dev/null | grep -cE "[s]eedtest.sh|[s]oak.sh"' | tr -d '\r')
     if [ "${RUNNING:-0}" -gt 0 ]; then
-        echo "ABORT: 设备上还有 $RUNNING 个 seedtest.sh 在跑 —— 会抢 4460/10080。"
+        echo "ABORT: 设备上还有 $RUNNING 个 seedtest/soak 在跑 —— 会抢 4460/10080。"
         echo "       先 ./rundev.sh clean <tag>，或手工 killtree。"
-        adb_ shell 'ps -A -o PID,ARGS 2>/dev/null | grep "[s]eedtest.sh"'
+        adb_ shell 'ps -A -o PID,ARGS 2>/dev/null | grep -E "[s]eedtest.sh|[s]oak.sh"'
         exit 2
     fi
     adb_ shell "rm -f $HOUT"
     # setsid 脱离当前会话；stdin/stdout/stderr 全部指向文件或 /dev/null，
     # 于是 adb 管道断掉对设备侧没有任何影响。
-    adb_ shell "cd $D && setsid sh -c 'echo \$\$ > $HPID; exec sh seedtest.sh $TAG $* > $HOUT 2>&1' </dev/null >/dev/null 2>&1 &"
+    adb_ shell "cd $D && setsid sh -c 'echo \$\$ > $HPID; exec sh $SCRIPT $TAG $* > $HOUT 2>&1' </dev/null >/dev/null 2>&1 &"
     sleep 3
     P=$(adb_ shell "cat $HPID 2>/dev/null" | tr -d '\r')
     if [ -z "$P" ]; then echo "启动失败：没有 pidfile"; exit 3; fi
@@ -58,17 +67,17 @@ status)
     [ -n "$P" ] && adb_ shell "kill -0 $P 2>/dev/null && echo alive" | grep -q alive && ALIVE=yes
     echo "tag=$TAG pid=${P:-?} alive=$ALIVE"
     adb_ shell "
-        L=$D/st-$TAG.serial.log
+        L=$D/$PFX-$TAG.serial.log
         echo \"serial=\$(wc -c < \$L 2>/dev/null || echo 0)B  BEGIN=\$(grep -ac NETPROBE-BEGIN \$L 2>/dev/null || echo 0)  END=\$(grep -ac NETPROBE-END \$L 2>/dev/null || echo 0)\"
         echo '--- 最近 6 行 out ---'; tail -6 $HOUT 2>/dev/null"
     ;;
 collect)
     DEST=${1:-.}
     mkdir -p "$DEST"
-    adb_ pull "$HOUT" "$DEST/st-$TAG.out" >/dev/null 2>&1 && echo "out  -> $DEST/st-$TAG.out"
-    adb_ pull "$D/st-$TAG.serial.log" "$DEST/st-$TAG.serial.log" >/dev/null 2>&1 && echo "serial -> $DEST/st-$TAG.serial.log"
+    adb_ pull "$HOUT" "$DEST/$PFX-$TAG.out" >/dev/null 2>&1 && echo "out  -> $DEST/$PFX-$TAG.out"
+    adb_ pull "$D/$PFX-$TAG.serial.log" "$DEST/$PFX-$TAG.serial.log" >/dev/null 2>&1 && echo "serial -> $DEST/$PFX-$TAG.serial.log"
     # 判据一律从 serial 重算：脚本的汇总可能根本没跑到（管道断、被杀）
-    L="$DEST/st-$TAG.serial.log"
+    L="$DEST/$PFX-$TAG.serial.log"
     [ -f "$L" ] || { echo "没有 serial 日志，无法重算"; exit 4; }
     echo "--- 按 serial 重算判据 ---"
     printf 'BEGIN=%s END=%s\n' "$(grep -ac NETPROBE-BEGIN "$L")" "$(grep -ac NETPROBE-END "$L")"
@@ -82,10 +91,10 @@ clean)
     adb_ shell "
         killtree() { for k in \$(pgrep -P \"\$1\" 2>/dev/null); do killtree \"\$k\"; done; kill -9 \"\$1\" 2>/dev/null; }
         [ -n '$P' ] && killtree $P
-        for p in \$(ps -A -o PID,ARGS 2>/dev/null | grep '[s]eedtest.sh' | awk '{print \$1}'); do killtree \$p; done
+        for p in \$(ps -A -o PID,ARGS 2>/dev/null | grep -E '[s]eedtest.sh|[s]oak.sh' | awk '{print \$1}'); do killtree \$p; done
         for p in \$(ps -A -o PID,ARGS 2>/dev/null | grep '[n]c -l -p 10080' | awk '{print \$1}'); do killtree \$p; done
         sleep 2
-        echo \"seedtest=\$(ps -A -o ARGS | grep -c '[s]eedtest.sh')  nc=\$(ps -A -o ARGS | grep -c '[n]c -l -p 10080')  10080监听=\$(awk 'NR>1 && \$4==\"0A\" {print \$2}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -ci ':2760$')\""
+        echo \"seedtest=\$(ps -A -o ARGS | grep -cE '[s]eedtest.sh|[s]oak.sh')  nc=\$(ps -A -o ARGS | grep -c '[n]c -l -p 10080')  10080监听=\$(awk 'NR>1 && \$4==\"0A\" {print \$2}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -ci ':2760$')\""
     adb_ shell "rm -f $HPID"
     ;;
 *)

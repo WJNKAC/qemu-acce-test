@@ -30,7 +30,15 @@ MPORT=${MPORT:-4470}
 SLIRP_DNS_SERVER=${SLIRP_DNS_SERVER-223.5.5.5}
 [ -n "$SLIRP_DNS_SERVER" ] && export SLIRP_DNS_SERVER
 MAXLOG=${MAXLOG:-8000000}       # serial 滚动阈值（保最近 ~40 轮）
-END=$(( $(date +%s) + HOURS * 3600 ))
+# ⚠ POSIX 的 $(( )) 只做整数算术：HOURS=0.06 会直接报
+#   `0.06: unexpected '.'` 然后整个脚本不干活（而且不留 serial 日志，
+#   现场看起来像"刚启动就退了"）。要支持小数，得先算成整数秒。
+HOURS_SEC=$(awk -v h="$HOURS" 'BEGIN { printf "%d", h * 3600 }' 2>/dev/null)
+case "$HOURS_SEC" in
+    ''|*[!0-9]*) echo "soak: HOURS=$HOURS 不是正数"; exit 2 ;;
+esac
+[ "$HOURS_SEC" -gt 0 ] || { echo "soak: HOURS=$HOURS 折算成 $HOURS_SEC 秒，太短"; exit 2; }
+END=$(( $(date +%s) + HOURS_SEC ))
 
 for f in "$BIN" "$H/vclk" "$SEED" "$H/deb12-clean.qcow2"; do
     [ -e "$f" ] || { echo "MISSING $f"; exit 3; }
@@ -48,6 +56,24 @@ BINMD5=$(md5sum "$BIN" 2>/dev/null | awk '{print $1}')
 HV_STATS=${HV_STATS:-3600}
 export HV_STATS
 
+# host 侧 10080 监听。soak 原来完全没有这一段 —— 于是 curl-GW 每轮都是 000，
+# 一整列计数器等于不存在（"计数器数不到它，等于没有它"，13.54 同款）。
+# 与 seedtest.sh 同一套：printf 算十六进制、查 tcp/tcp6 的 LISTEN、父进程写 pidfile。
+LHEX=$(printf '%04X' 10080)
+LPFILE=$H/soak-$TAG.listen.pid
+if awk 'NR>1 && $4=="0A" {print $2}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ":${LHEX}$"; then
+    echo "!! 10080(0x$LHEX) 已被占用 —— 沿用现有监听者，curl-GW 读数不由本脚本担保"
+else
+    ( while true; do
+        printf 'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK' \
+          | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
+        sleep 1
+      done ) >/dev/null 2>&1 &
+    LPID=$!
+    echo "$LPID" > "$LPFILE"
+    sleep 1
+fi
+
 $BIN -L "$BIOS" -M virt,gic-version=3 -cpu max -m 2048 \
     -display none -smp "$SMP" -accel henge \
     -drive if=pflash,format=raw,unit=0,file=$BIOS/edk2-aarch64-code.fd,readonly=on \
@@ -59,8 +85,19 @@ $BIN -L "$BIOS" -M virt,gic-version=3 -cpu max -m 2048 \
     >/dev/null 2>"$ERR" &
 QP=$!
 
+killtree() {
+    for _k in $(pgrep -P "$1" 2>/dev/null); do killtree "$_k"; done
+    kill -9 "$1" 2>/dev/null
+}
+
 cleanup() {
-    kill -9 $QP 2>/dev/null
+    killtree "$QP"
+    [ -n "${LPID:-}" ] && killtree "$LPID"
+    if [ -f "${LPFILE:-/nonexistent}" ]; then
+        _lp=$(cat "$LPFILE" 2>/dev/null)
+        if [ -n "$_lp" ] && [ "$_lp" != "$$" ] && [ "$_lp" != "1" ]; then killtree "$_lp"; fi
+        rm -f "$LPFILE"
+    fi
     # 留现场：进程怎么死的，比"死没死"重要
     echo "=== soak $TAG 结束 ($(date -u +%FT%TZ)) ===" >> $H/soak-$TAG.summary
 }
@@ -135,13 +172,15 @@ trap - EXIT HUP INT TERM
 # 列序（见文件头）：1 t_s  2 round  3 rss_kb  4 dsusp  5 ok  6 refused  7 timeout
 #                   8 curl200  9 curl000  10 err  11 lines  12 df
 # 只取 2/5/6/7/8/9/10 —— 3、4 不能取 max（rss 会回落，dsusp 本来就是累计量）。
-read -r RMAX OK REF TO C2 C0 PE <<EOF
-$(awk 'NR>1 {
+# 不用 heredoc：它的终止符必须顶格独占一行，而这里原先写成
+# `$(awk ... )EOF` —— 判定为未闭合，脚本静默走完却没产出汇总。
+# set -u 抓不到这种错（不是未定义变量），直接 set -- 最稳。
+set -- $(awk 'NR>1 {
     if ($2+0 > r) r = $2+0
     if ($5+0 > m5) m5 = $5+0; if ($6+0 > m6) m6 = $6+0; if ($7+0 > m7) m7 = $7+0
     if ($8+0 > m8) m8 = $8+0; if ($9+0 > m9) m9 = $9+0; if ($10+0 > m10) m10 = $10+0
-} END { printf "%d %d %d %d %d %d %d\n", r, m5, m6, m7, m8, m9, m10 }' "$SC" 2>/dev/null)EOF
-RMAX=${RMAX:-0}; OK=${OK:-0}; REF=${REF:-0}; TO=${TO:-0}; C2=${C2:-0}; C0=${C0:-0}; PE=${PE:-0}
+} END { printf "%d %d %d %d %d %d %d", r, m5, m6, m7, m8, m9, m10 }' "$SC" 2>/dev/null)
+RMAX=${1:-0}; OK=${2:-0}; REF=${3:-0}; TO=${4:-0}; C2=${5:-0}; C0=${6:-0}; PE=${7:-0}
 # BEGIN/END 直接数日志只是"当前窗口内"的量（滚动后必然小于 RMAX），留作参照。
 BEG=$(cnt 'NETPROBE-BEGIN'); ENDN=$(cnt 'NETPROBE-END')
 {
