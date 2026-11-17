@@ -6677,3 +6677,131 @@ $ grep -n "engine/" accel/henge/meson.build
 > **写归因之前，先在同仓库里 grep 该现象是否已被归因过。**
 > 已有结论要么引用它，要么给出推翻它的证据，不能装作不存在。
 
+
+---
+
+### 13.49 再撤回 13.48：passt 是自限制（有运行时开关），真障碍是 SELinux 的 bind；正解是 socketpair + `--fd`
+
+用户一句"这个是不是本来就是 passt 的自我限制"直接点破。**是的，而且我连开关都没设。**
+
+#### 一、自限制的形态：三个运行时开关 + 三个编译期宏
+
+源码树里的实际写法（`cache/tools/passt/`）：
+
+```c
+/* isolation.c:580 */
+if (getenv("HV_PASST_NO_SECCOMP"))     /* ← 运行时，不是 #ifdef */
+    return;
+if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+    prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog))
+    die_perror("Failed to apply seccomp filter");
+```
+
+| 开关 | 类型 | 生效点 |
+|---|---|---|
+| `HV_PASST_NO_SECCOMP` | **运行时 getenv** | `isolation.c:583` |
+| `HV_PASST_NO_SANDBOX` | **运行时 getenv** | `passt.c:429` |
+| `HV_PASST_NO_USERNS` | **运行时 getenv** | `conf.c:1940` |
+| `NO_CAPDROP` / `NO_CLOSE_RANGE` / `NO_SETGROUPS` | 编译期宏 | build 时 `-D` |
+
+我此前裸跑 `./passt -f -q --socket ./t.sock`，**一个都没设** —— passt 自己去装
+glibc 风格的 seccomp 白名单，bionic 下必死。这是显式的操作错误。
+
+#### 二、但设了全套也不够：vivo 的 Termux 域起不来
+
+```
+$ export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1 \
+         HV_PASST_NO_CAPDROP=1 HV_PASST_NO_CLOSE_RANGE=1 HV_PASST_NO_SETGROUPS=1
+$ ./passt --help >h.out 2>&1;  echo rc=$?
+  Bad system call            ./passt --help
+  rc=159   bytes=0
+$ ./passt --version >v.out 2>&1; echo rc=$?
+  Bad system call
+  rc=159   bytes=0
+```
+
+**`--help` 和 `--version` 都 0 字节输出就死** → 不是某条业务路径，是启动序列。
+两个域的对照：
+
+| 域 | Seccomp | passt 能否执行 |
+|---|---|---|
+| adb shell（`u:r:shell:s0`, uid 2000） | **0**（未启用） | ✅ `--help` rc=0 |
+| Termux（`u:r:untrusted_app_27:s0`, u0_a343） | **2**（Android app seccomp） | ❌ 启动即 SIGSYS |
+
+`--help` 能过说明文件执行权限、基础 syscall 都没问题；`--version` 死说明
+**bionic 启动序列里有一条被 app seccomp 拦**。静态链接试过（`make static`）——
+bionic 静态链接受限，编译不出产物，二进制已从备份恢复（md5 一致）。
+
+**所以"搬域到 Termux"这条路是死的**，13.48 说的"半天搬域"同样错。
+
+#### 三、真障碍其实在另一头：adb shell 域 bind 目录 socket 被 SELinux 拒
+
+```
+$ ./passt -f -q --socket ./passt.sock
+  Failed to bind UNIX domain socket: Permission denied
+$ ./passt -f -q --socket @passtabs        # abstract，绕开文件系统
+  Failed to bind UNIX domain socket: Permission denied   ← 是域策略，不是路径
+```
+
+#### 四、正解：`--fd` + `socketpair`，两侧都不需要 bind
+
+`passt --help` 里的这一行是关键：
+
+```
+  -F, --fd FD       Use FD as pre-opened connected socket
+```
+
+QEMU 侧同样有 `-netdev socket,fd=N`（实测 `-netdev socket,id=n0,fd=99`
+不报 fd 错，只报缺 machine，说明参数被接受）。
+
+于是：**用一个 `socketpair(AF_UNIX, SOCK_STREAM)` 把两端连起来，
+双方都从继承的 fd 拿 socket，全流程不 bind、不碰文件系统。**
+
+前提验证（本轮实测，`work/probe/sptest.c`，静态 aarch64）：
+
+```
+=== adb shell 域 ===
+OK socketpair fd=3,4
+OK data n=4 buf=ping        ← 连数据面都通
+rc=0
+```
+
+**socketpair 在 adb shell 域完全可用。** 因此：
+
+```
+launcher (adb shell 域)
+  socketpair() → sv[0], sv[1]
+  fork → exec passt -F sv[0]
+  fork → exec qemu ... -netdev socket,fd=sv[1]
+```
+
+两个子进程同域（`u:r:shell:s0`，Seccomp 0），passt 不会被 seccomp 杀，
+socket 来自 socketpair 不需要 bind，**两个障碍同时消失**。
+
+#### 五、花费（修正后的答案）
+
+| 项 | 花费 |
+|---|---|
+| 改 passt / QEMU 源码 | **0 行**（`--fd` 和 `socket,fd=` 都是现成的） |
+| 写 launcher | **~50 行 C**（socketpair + 两次 fork/exec + 转发信号） |
+| 交叉编译 + 推设备 | 30 分钟 |
+| 验证（boot + DHCP + curl） | 30 分钟 |
+| **合计** | **1–1.5 小时** |
+
+比 13.48 的"半天搬域"低，且**确定性高** —— 每一个前提都已实测：
+`socketpair` 可用、`passt -F` 存在、`qemu -netdev socket,fd=` 接受、adb shell 域 passt 能跑。
+
+#### 六、三次归因错误的完整链
+
+| 版本 | 说法 | 死因 |
+|---|---|---|
+| 13.47 | 引擎 `notify()` 早退 | **那份代码不参与端口编译**（`meson.build` 只有 core/host/compat） |
+| 13.48 | 改配置 + 搬域到 Termux，半天 | **Termux 域 passt 启动即 SIGSYS**（app seccomp 拦 bionic 启动序列） |
+| **13.49** | **socketpair + `--fd`，1–1.5 小时** | 前提全部实测通过 |
+
+13.48 里我还自信地写了"修复花费 = 0 行代码 + 半天搬域"。**"搬域"这个词
+掩盖了一个没验证的假设**：Termux 域既然能 bind，就应该能跑。
+实测是能 bind 但跑不起来 —— 同一句话里的两个能力，我默认它们同进退。
+
+**纪律：一个域"能做 A"不等于"能做 B"，每个能力单独实测。**
+
