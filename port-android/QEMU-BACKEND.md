@@ -7939,3 +7939,191 @@ crash=0 devreboot=0
 **这三个都是"脚本静默不干活"，不是"跑出错数据"。** 后者会被判据抓到，
 前者只会让报告变得很安静 —— 所以冒烟必须看**它有没有真的产出结构**，
 不能只看进程还在不在。
+
+## 13.59 第一次过夜 soak：131 轮全绿，然后停在 UEFI 菜单
+
+### 一、结果（q-p0a9 + SLIRP_DNS_SERVER，slirp，smp2，04:02 起跑）
+
+| 判据 | 值 | 说明 |
+|---|---|---|
+| 时长 / 轮次 | **3.30 h / 131 轮** | 平均轮间隔 84 s |
+| `state=ok` | **131** | |
+| `state=refused` | **131** | TCP-GW22，路径通 |
+| **`state=timeout`** | **0** | 唯一可疑信号，全程零 |
+| `DNS-RESOLVE` | **131/131 成功** | 每轮 `101.6.15.130` |
+| `curl-EXT` | 131 非000 / 0 个 000 | 404 属正常 |
+| `state=err:` | 0 | 探针自身没坏 |
+| 客机 uptime | 60.2–61.3 | 与 20 轮门禁一致 |
+| `boot_id` | 未变 | 机器没重启过 |
+| `dsusp` | 0 ms | 无 doze 污染 |
+
+**131 轮里没有一次 timeout、没有一次 DNS 失败、没有一次半途死。**
+这是 DNS 修好之后第一个长窗口，slirp 后端在 3.3 小时尺度上是干净的。
+
+### 二、★ 然后它停了 —— 停在 UEFI Boot Manager，不是死在 Linux
+
+07:04 serial 停止增长，900 s 后 STALL 判据收工。现场（summary 里的原文）：
+
+```
+[   69.413572] systemd-shutdown[1]: Rebooting.
+[   69.434978] reboot: Restarting system
+UEFI firmware (version edk2-stable202408-prebuilt ...)
+Error: Image at 000BFDB6000 start failed: 00000001
+Error: Image at 000BFD6D000 start failed: Not Found
+Error: Image at 000BFCBA000 start failed: Unsupported
+Error: Image at 000BFC3F000 start failed: Not Found
+Error: Image at 000BFB65000 start failed: Aborted
+Tpm2SubmitCommand - Tcg2 - Not Found
+Image type X64 can't be loaded on AARCH64 UEFI system.
+ESC[2J ESC[01;01H ESC[=3h   ← 清屏 + 光标归位 + 模式设置，反复三次
+```
+
+读法：
+
+1. 客机**正常关机重启**（`systemd-shutdown` → `reboot: Restarting system`）。
+2. 控制权交回 UEFI，UEFI 尝试 5 个引导项，全部 `start failed`。
+3. 最后一行 `Image type X64 can't be loaded on AARCH64` 之后，**不再有内核输出**，
+   取而代之的是清屏/光标归位序列 —— 那是 Boot Manager 菜单在画界面，**在等按键**。
+4. `crash=0`、`boot_id` 未变 → **QEMU 活着，客机没崩，是没人按回车**。
+
+### 三、★ `Image type X64` 每轮都有，不是故障标志
+
+差点把它当成"引导失败"。数一遍：
+
+```
+Image type X64 : 66 次      UEFI firmware : 66 次
+start failed   : 330 次     reboot: Restarting : 66 次
+```
+
+窗口里正好 66 轮 —— **每轮 5 个失败引导项 + 1 条 X64 提示**，是常态。
+UEFI 试完这些失败项后会回落到磁盘上的 `\EFI\BOOT\BOOTAA64.EFI` 把 Linux 拉起来，
+所以每轮照样能跑 `NETPROBE-BEGIN`。
+
+**这是一条读侧规则**：日志里反复出现的 `Error:` 不等于每轮都在报错，
+要先数"它和轮次的比例"。1:1 的是噪声，只在最后一轮出现一次的才是事件。
+
+### 四、两个对照都否定了"累积污染"假设
+
+第一反应是 varstore 被 UEFI 写了 140 次写坏了（13.x 有过一次先例）。
+做了两组单变量对照，**都不复现**：
+
+| 实验 | 变量 | 结果 |
+|---|---|---|
+| A | 用 soak 跑完的 `soak-night1.img`（被 UEFI 写了 3 小时）+ 干净系统盘 | **正常启动**，进 Linux，cloud-init 跑到 37 s |
+| B | 干净 `vars0.img` + soak 跑完的 `soak-night1.qcow2` | **正常启动**，还接着跑出 `NETPROBE-END round=143` |
+
+两组都能起来，所以：
+
+- 不是 varstore 累积污染；
+- 不是系统盘坏了（B 还证明客机侧的 round 计数是**持久在盘上**的，跨 soak 连续）；
+- **是一次性的"掉进 Boot Manager 菜单"**，条件未知，目前**无法按需复现**。
+
+这是本节唯一没有定性的东西。它不像是 henge 的问题（QEMU 活着、客机没崩、
+卡在固件层等按键），但在能复现之前不能排除"多次 reset 后设备枚举偶发失败"。
+**记为待查，不写成结论。**
+
+### 五、把"停顿"从致命改成可恢复
+
+原来的 STALL 分支是"记录 + 直接退出"，等于一次抖动就废掉整夜。
+night1 已经证明：那种停顿**只要一个回车就能继续**。改成三步：
+
+```
+判定停顿（STALL_SEC，默认 900）
+  → 取证：monitor 的 info status + serial 最后 20 行，写进 summary
+  → 试恢复：sendkey ret ×3，每次等 20 s，看轮次有没有前进
+  → 成功：记 RECOVERED，LAST 对齐，继续跑；失败：记录后退出
+```
+
+`mon()` 有个坑：HMP 在无 PTY 的连接里按字符回显，命令必须用 `\r` 结束。
+用 `\n` 会得到 `unknown command: 'screendump'`（实测，看着像"命令不存在"）。
+
+**验证做了什么、没做什么，要说清楚：**
+
+| 路径 | 状态 |
+|---|---|
+| 停顿判定（60 s 可调） | ✅ 实测：用"只跑一次不重启"的 seed 制造必然停顿 |
+| 取证（monitor + serial 尾） | ✅ 实测，写进了 summary |
+| 恢复失败 → 脏退出 | ✅ 实测：3 次回车后无新轮次，`recovered=0`，进程干净退出 |
+| **恢复成功（菜单 → 回车 → 进 Linux）** | ❌ **未实测**，需要复现菜单；下次真遇到会自己写 `## RECOVERED` |
+
+### 六、★ RSS 这一列要打折：`statm` 与 `smaps` 差 250–300 MB
+
+按 TSV 的 RSS 列做线性回归，稳态段（3 小时、947 个样本）给出：
+
+```
+斜率 +5.72 MB/h  (SE 0.20)  95%CI [+5.32, +6.12]  t=+28.0
+```
+
+t=28，看起来"确凿有泄漏"。**但这个数是 statm 读出来的**，而同时刻对同一个进程：
+
+| 读法 | 值 | 机制 |
+|---|---|---|
+| `/proc/<pid>/statm` 第 2 字段 × 4 KB | **1235 MB** | 内核 per-mm 缓存计数器，会漂 |
+| `/proc/<pid>/status VmRSS` | 888 MB | 同一来源 |
+| `/proc/<pid>/smaps_rollup Rss` | **911 MB** | 走页表重新统计，地面真值 |
+| 其中 `Anonymous` | 974 MB | |
+
+**同一瞬间差 250–300 MB。** 所以"RSS 缓慢上升"至少要先排除一件事：
+那是真实占用增长，还是 statm 这个计数器在漂。
+
+这一条同时**收窄 13.39 的结论**：那次"RSS 结案：完全持平"用的也是 statm。
+它应该改述为"**在 statm 口径下、16 轮窗口内持平**"，而不是"没有泄漏"。
+
+处置：把 `rss_smaps_kb` / `anon_kb` / `threads` 三列加进 soak 的 TSV
+（列 13/14/15，只往后加，不动既有列号），下次过夜两列并排采集，
+用同一个窗口比斜率 —— 谁在涨一目了然，不用再重跑。
+
+### 七、★ 累计计数：`max` 不是累计量
+
+night1 的第一个汇总把 **131 轮记成了 66 轮**，`max(curl200)` 也停在 66。
+读起来像"第 66 轮之后 curl 全坏了"，实际什么都没坏：
+
+```
+round 回退事件：1 次   131 -> 66  (t=11062s)   ← 日志滚动
+```
+
+计数器是从**当前日志窗口**里 `grep -c` 出来的，`roll_log` 之后从 0 重新数。
+所以"TSV 各列取 max"只是"某一瞬间的最大值"，不是累计。
+
+改成滚动时把被丢弃前缀的计数累加进 `ACC_*`，并且：
+
+- **按行切**，不按字节切。`head -c` 可能切在行中间，那行判据在 head 里是
+  `NETPROBE-BEG`、在 tail 里是 `IN round=...`，**两边都不算，静默少一条**。
+- 加 `SOAK_SELFTEST=1`：用**真代码**跑一个当前目录的合成日志，
+  行长刻意不一（让"按字节切"必然切中缝），断言 40 轮 / 80 条 ok 守恒。
+
+```
+selftest: 写入 40 轮，日志 8440 -> 904 B（MAXLOG=1000）
+selftest: ACC_BEGIN=36 窗口=4 => 累计 40
+selftest: ACC_OK=71 窗口=9 => 累计 80
+selftest: PASS
+```
+
+### 八、★ 环境变量不跨 adb：白名单是结构性漏
+
+给 `soak.sh` 加了 `STALL_SEC` 之后测停顿分支，跑了 4 分钟没反应 ——
+`rundev.sh` 的转发白名单里没有它，`STALL_SEC=60` 根本没到设备上，
+脚本还在等默认的 900 s。**"设了却没生效"和"生效了但没触发"现场完全一样。**
+
+这是同一个坑第二次（上次是 `VARS_SRC`，导致第一次对照实验跑的其实是默认值）。
+白名单的问题在于它**结构性**会漏：每加一个 knob 就漏一次。补法是白名单之外再加
+`DEV_ENV` 自由串兜底：
+
+```sh
+DEV_ENV="FOO=1 BAR=2" ./rundev.sh start ...
+```
+
+### 九、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 3.3 h / 131 轮 | ✅ 全绿：timeout 0、DNS 131/131、curl 131/131 |
+| 停顿 | ⚠ 真实发生一次，停在 UEFI 菜单等按键；**无法按需复现** |
+| varstore 累积 | ❌ 对照 A 否定 |
+| 系统盘损坏 | ❌ 对照 B 否定（还跑出 round=143） |
+| `Image type X64` | ✅ 定性为每轮常态噪声，1:1 于轮次 |
+| 停顿恢复 | ✅ 判定/取证/失败退出已实测；**成功路径未实测** |
+| RSS 趋势 | ⚠ statm 给 +5.72 MB/h（t=28），但 statm≠smaps（差 250–300 MB），**结论待 smaps 复核** |
+| 13.39 的"RSS 持平" | ⚠ 收窄为"statm 口径、16 轮窗口内持平" |
+| 累计计数 | ❌ max≠累计（131→66），已改 ACC + 按行切 + 自检 |
+| 环境转发 | ❌ 白名单漏 `STALL_SEC`，已加 `DEV_ENV` |

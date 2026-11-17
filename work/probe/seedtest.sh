@@ -49,7 +49,10 @@ SLIRP_DNS_SERVER=${SLIRP_DNS_SERVER-223.5.5.5}
 [ -f "$SEED" ] || { echo "MISSING $SEED"; exit 3; }
 [ -x "$H/vclk" ] || { echo "MISSING vclk"; exit 3; }
 
-cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
+# VARS_SRC 可指向一个"已被 UEFI 写过"的 varstore，用来做对照实验。
+# 13.59 就是靠它隔离出"UEFI 引导项累积 -> 掉菜单 -> 不再进 Linux"的。
+VARS_SRC=${VARS_SRC:-$H/vars0.img}
+cp -f "$VARS_SRC" "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 # 磁盘必须用副本。直接挂 deb12.qcow2 会把 netprobe 三件套写进基线 ——
 # 第一次试跑就是这么污染的：之后所有基于它的 overlay 都会自动 reboot。
 # 基线 deb12-clean.qcow2 是 444，副本显式放开写权限（toybox 的 cp -f 保留源权限）。

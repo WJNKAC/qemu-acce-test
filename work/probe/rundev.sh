@@ -12,6 +12,10 @@
 #
 # 用法:
 #   ./rundev.sh start <tag> [seedtest.sh 的参数...]
+#
+# 需要给设备侧传额外环境变量时（白名单之外）：
+#   DEV_ENV="FOO=1 BAR=2" ./rundev.sh start ...
+# 白名单只覆盖常用项；DEV_ENV 是兜底，避免"设了却没生效"。
 #   ./rundev.sh status <tag>
 #   ./rundev.sh collect <tag> [本地目录]
 #   ./rundev.sh clean  <tag>
@@ -55,7 +59,21 @@ start)
     adb_ shell "rm -f $HOUT"
     # setsid 脱离当前会话；stdin/stdout/stderr 全部指向文件或 /dev/null，
     # 于是 adb 管道断掉对设备侧没有任何影响。
-    adb_ shell "cd $D && setsid sh -c 'echo \$\$ > $HPID; exec sh $SCRIPT $TAG $* > $HOUT 2>&1' </dev/null >/dev/null 2>&1 &"
+    # 宿主的环境变量不会自动进 adb shell —— 必须显式拼到命令前面。
+    # 这坑踩过：VARS_SRC 设了却没生效，于是"对照实验"跑的其实是默认值，
+    # 而结论看起来完全合理（默认值本来就能正常启动）。
+    # ⚠ 白名单是**结构性**漏：新增一个 knob（STALL_SEC）就漏一次，
+    # 而漏掉的后果是"你以为设了、其实跑的是默认值"，现场完全看不出来。
+    # 这次就是这么栽的（STALL_SEC=60 没过去，脚本还在等 900）。
+    # 所以：白名单保留（常用项），另加 DEV_ENV 自由串兜底。
+    ENVP=""
+    for v in VARS_SRC SLIRP_DNS_SERVER DISK_SRC MPORT MAXLOG NET HV_STATS PASST_DNS STALL_SEC KEEP_DISK ENDMARK; do
+        eval "val=\${$v-}"
+        [ -n "${val:-}" ] && ENVP="$ENVP $v=$val"
+    done
+    [ -n "${DEV_ENV:-}" ] && ENVP="$ENVP $DEV_ENV"
+    [ -n "$ENVP" ] && echo "转发环境: $ENVP"
+    adb_ shell "cd $D && setsid sh -c 'echo \$\$ > $HPID; $ENVP exec sh $SCRIPT $TAG $* > $HOUT 2>&1' </dev/null >/dev/null 2>&1 &"
     sleep 3
     P=$(adb_ shell "cat $HPID 2>/dev/null" | tr -d '\r')
     if [ -z "$P" ]; then echo "启动失败：没有 pidfile"; exit 3; fi

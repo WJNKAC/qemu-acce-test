@@ -107,7 +107,9 @@ for f in "$BIN" "$H/vclk" "$SEED" "$H/deb12-clean.qcow2"; do
     [ -e "$f" ] || { echo "MISSING $f"; exit 3; }
 done
 
-cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
+# VARS_SRC 见 seedtest.sh 同名变量说明。
+VARS_SRC=${VARS_SRC:-$H/vars0.img}
+cp -f "$VARS_SRC" "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 cp -f $H/deb12-clean.qcow2 "$DISK" 2>/dev/null; chmod 644 "$DISK" 2>/dev/null
 rm -f "$LOG" "$ERR" "$SC"
 : > "$SC"
@@ -176,6 +178,14 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 
+# monitor 命令。必须用 \r 结束：HMP 在无 PTY 的连接里按字符回显，
+# 用 \n 会得到 "unknown command"（实测）。
+mon() { printf '%s\r' "$1" | timeout 6 nc 127.0.0.1 "$MPORT" 2>/dev/null; }
+
+# 停顿判定阈值（秒）。默认 900 = OnBootSec(60) 的 15 倍。
+STALL_SEC=${STALL_SEC:-900}
+RECOVER=0
+
 set -- $($H/vclk); M0=$1; B0=$2
 SUSP=0
 LAST=0
@@ -214,13 +224,36 @@ while [ "$(date +%s)" -lt "$END" ]; do
         } >> $H/soak-$TAG.summary
         break
     fi
-    # 断链：15 分钟无新轮次（OnBootSec=60 的 15 倍）
+    # 断链：连续 STALL_SEC 秒无新轮次
     if [ "$RN" -eq "$LAST" ]; then
         STALL=$((STALL + 10))
-        if [ "$STALL" -ge 900 ]; then
-            echo "!! STALL ${STALL}s at round=$RN" | tee -a $H/soak-$TAG.summary
-            tail -20 "$LOG" >> $H/soak-$TAG.summary 2>/dev/null
-            break
+        if [ "$STALL" -ge "$STALL_SEC" ]; then
+            {
+                echo "!! STALL ${STALL}s at round=$RN"
+                echo "--- 现场：monitor 状态 ---"
+                mon "info status"
+                echo "--- 现场：serial 最后 20 行 ---"
+                tail -20 "$LOG" 2>/dev/null
+            } >> $H/soak-$TAG.summary 2>/dev/null
+
+            # 13.59：night1 的那次停顿停在 UEFI Boot Manager 菜单
+            # （serial 上是 ESC[2J/ESC[01;01H 反复刷屏，且 QEMU 还活着）。
+            # 那种情况下**只要一个回车就能继续**，不该让整夜到此为止。
+            # 所以先试着敲回车，能继续就继续，并记为 RECOVERED。
+            for _try in 1 2 3; do
+                mon "sendkey ret" >/dev/null 2>&1
+                sleep 20
+                _new=$((ACC_BEGIN + $(cnt 'NETPROBE-BEGIN')))
+                if [ "$_new" -gt "$RN" ]; then RECOVER=1; break; fi
+                kill -0 $QP 2>/dev/null || break
+            done
+            if [ "$RECOVER" = 1 ]; then
+                echo "## RECOVERED after sendkey ret (round $RN -> $_new)" >> $H/soak-$TAG.summary
+                LAST=$_new; STALL=0
+            else
+                echo "!! 恢复失败：3 次回车后仍无新轮次 —— 记录现场后退出" >> $H/soak-$TAG.summary
+                break
+            fi
         fi
     else
         LAST=$RN; STALL=0
@@ -249,7 +282,7 @@ echo "=== soak $TAG 汇总 ==="
 echo "轮次: 累计 BEGIN=$BEG (滚动累加 $ACC_BEGIN + 当前窗口 $(cnt 'NETPROBE-BEGIN'))"
 echo "探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE"
 echo "dsusp_cum_ms=$SUSP  $( [ $SUSP -lt 1000 ] && echo VALID || echo INVALID )"
-echo "crash=$CRASH devreboot=$DEVRB"
+echo "crash=$CRASH devreboot=$DEVRB recovered=$RECOVER"
 echo "bin_md5=$BINMD5  boot_id=$BID0"
 echo "--- 三态判读（按 STATES.md）---"
 echo "refused=$REF 是「网络通」的阳性证据（RST 需完整栈）；timeout=$TO 才是可疑信号。"
