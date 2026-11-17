@@ -1,0 +1,6 @@
+TAG=p4 BIN=q-p0a5 MAXS=150
+lines=587 bds=2 linux=1 systemd=76
+dsusp_cum_ms=0   verdict=VALID
+rss_start=0 rss_max=1031236 rss_end=1024744
+STALE_hits=0 del_probe_lines=11
+last: henge-p0a: del#704 defer=1 del_hit=5 del_miss=698 ram_reuse=4 epoch_stale=0 hw=0 nram=3

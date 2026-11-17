@@ -4908,3 +4908,171 @@ __atomic_add_fetch(&r->page_gen[pg], 1, __ATOMIC_SEQ_CST);
 第一次把 `epoch_stale` 加在两个次要检查点，跑出 0，
 我差点又写"P0-a 不触发"；直到把它加到 `hv_block_find()`（主路径）
 才确认 0 是真实的 —— 但原因不是"没机会"，而是"前提不成立"。
+
+---
+
+### 13.35 ★★★ 13.34 的"零命中"是空判据：出口没打开。真数字是 del 704 / 复用 4 / 退役窗口 0
+
+这一节否定的不是我上一轮的结论，是**我上一轮的证据本身**。
+
+#### 一、三个出口全都关着，命中也不会出声
+
+13.34 写"带盘 boot 跑 140 秒（`bds=2 linux=1 lines=585`）……（空）……一次都没命中"。
+去翻那轮的日志 `/data/local/tmp/vd.log`：
+
+```
+$ grep -c "P0-a"        vd.log   → 0
+$ grep -c "^stats "     vd.log   → 0
+$ grep -c "henge-p0a"   vd.log   → 0
+```
+
+三个计数器一个都没被读出来。原因有三层，每一层都足够单独造成这个结果：
+
+| # | 出口 | 为什么关着 |
+|---|---|---|
+| 1 | 逐条命中打印 | 套了 `if (getenv("HV_P0A_STATS"))`，而 `HV_P0A_STATS` 在脚本、文档、设备环境里**一次都没设置过** |
+| 2 | 聚合行 `P0-a: ram_reuse ...` | 写在 `print_stats()` 里，而它由 `m->stats_interval` 门控；这个字段是独立 runner 的 `--stats` 选项，**移植层从来没有给它赋过值** |
+| 3 | QEMU 的 stderr | vivo 上的 `vdisk.sh` 是 `>/dev/null 2>&1`，探针输出直接进黑洞 |
+
+第 2 条还有个更坏的后果：`mmu.c` / `translate.c` 里**有一整类计数器只在
+`m->stats_interval != 0` 时才递增**（`tlb_range_flushes`、`kernel_ranges`、
+`protect_kind`、`race_kind`、`chained_early`）。移植层既然从没设过这个字段，
+那些数字在这个加速器上**从第一天起就结构性恒为 0**。
+"日志里没有那行"被当成了"那件事没发生"——这是第五次同类错误，
+前四次都是探针位置错，这次是探针位置对了、出口没接。
+
+#### 二、修法：让出口不经过任何开关
+
+| 改动 | 文件 | 说明 |
+|---|---|---|
+| 计数器每 64 次 `del_ram` 无条件打一行 | `henge-engine.c` | 不经过 getenv，不经过 `print_stats` |
+| 逐条命中打印去掉 `getenv` | `dispatch.c` | 命中本身就是稀有事件，前 20 次全打 |
+| `hv_engine_set_stats_interval()` + `HV_STATS=<秒>` | `henge-engine.c` / `henge-accel.c` | 让引擎的周期统计（含 block-hash 的 stale 块判据）真能开 |
+| `p0run.sh` | 新脚本 | stderr 落盘 + 每 5 秒采样 + dsusp 门控 + `trap EXIT` |
+| `vclk.c` | 新工具 | 静态 arm64，一次调用打 `mono_ms boot_ms rss_kb` |
+
+`vclk` 是必需的：设备上没有 python3 时，`/proc/uptime` 是 BOOTTIME（含 suspend），
+`date +%s.%N` 是 REALTIME（会被 NTP 跳），**两个都不是 MONOTONIC**。
+判 suspend 污染要的是 `dsusp = ΔBOOTTIME − ΔMONOTONIC`，两个钟都得是真钟。
+
+#### 三、实测：vivo V2156FA，带盘 boot 到 Linux，五轮
+
+| 轮 | 二进制 | lines | bds/linux/systemd | dsusp | RSS 峰 / 终 (KB) |
+|---|---|---|---|---|---|
+| p1 | q-p0a2（首批出口） | 587 | 2/1/77 | 1 ms | 1,020,756 / 1,014,256 |
+| p2 | q-p0a3（+REUSE 探针） | 585 | 2/1/75 | 1 ms | 1,023,768 / 1,017,764 |
+| p3 | q-p0a4（+del_hit/miss） | 586 | 2/1/76 | 1 ms | 1,024,040 / 1,016,616 |
+| p4 | q-p0a5（+live_blocks） | 587 | 2/1/76 | 0 ms | 1,031,236 / 1,024,744 |
+| p5 | q-p0a6（+retired_hit） | 588 | 2/1/77 | 1 ms | 1,021,192 / 1,015,052 |
+| p6 | q-p0a7（+del 递增 epoch） | 589 | 2/1/79 | 0 ms | 1,029,552 / 1,022,992 |
+
+六轮全部 `dsusp ≤ 1 ms`，六轮全部走到 Linux + systemd。**没有一轮是脏数据。**
+
+#### 四、数字推翻了 13.34 的"341 次复用机会"，差两个数量级
+
+```
+henge-p0a: del#704 defer=1 del_hit=5 del_miss=698 ram_reuse=4
+                              epoch_stale=0 retired_hit=0 hw=0 nram=3
+```
+
+| 量 | 13.34 的写法 | 实测 |
+|---|---|---|
+| `del_ram` 调用次数 | "341 次 romd toggle" | **704** |
+| 真正命中镜像窗口（`rc==0`） | 隐含 341 | **5** |
+| 没命中（`rc==-1`） | 未提 | **698** |
+| 真正复用退役槽位 | "341 次槽位复用机会" | **4** |
+
+**704 次里只有 5 次命中。** 因为 romd 窗口进过命令模式之后就被
+`nomirror[]` 拉黑了，此后每次 toggle 只产生 `region_del`，
+而引擎这边**早就没有任何东西可以退役**——`del_miss` 就是这 698 次的计数器。
+13.34 把"`del_ram` 被调了 341 次"直接读成了"341 次复用机会"，
+中间少了"命中镜像窗口"和"槽位真的被复用"两道闸门。
+
+#### 五、四次复用全部 `live_blocks=0`：这才是"P0-a 不存在"的直接证据
+
+```
+REUSE #1 slot=0 pa=0        size=4000000 readonly=1 old_epoch=1 -> 2 live_blocks=0
+REUSE #2 slot=1 pa=4000000  size=4000000 readonly=1 old_epoch=1 -> 2 live_blocks=0
+REUSE #3 slot=2 pa=40000000 size=80000000 readonly=0 old_epoch=1 -> 2 live_blocks=0
+REUSE #4 slot=1 pa=10000000 size=40000  readonly=0 old_epoch=2 -> 3 live_blocks=0
+```
+
+`live_blocks` 是**复用发生的那一刻**，扫全表数出 `b->ram == r` 的 block 数。
+
+**四次全是 0。** 也就是说：槽位被回收时，没有任何一个已翻译的 block 还挂在它上面。
+没有悬空 block，就不存在"跳进按已消失 host 内存翻译出来的代码"这回事——
+13.28 描述的那条路径缺的不是概率，是**前提**。
+
+这四次还全在 UEFI 极早期（`del#320` 之前），那时 guest 只翻译了寥寥几页，
+所以 `live_blocks=0` 是必然而不是巧合。
+
+#### 六、13.28 的假设可以正式结案：三个独立理由
+
+| # | 理由 | 判据 |
+|---|---|---|
+| 1 | 复用时机 | 4 次全在启动早期，`live_blocks=0` |
+| 2 | 复用次数 | 不是 341，是 4；`del_hit` 只有 5 |
+| 3 | `gen` 归零撞不上 | 混叠要 `b->gen == 0`，而 pflash varstore 的 `page_gen` 早被 `hv_invalidate_code` 抬过（13.34 已论证） |
+
+**所以"P0-a 已修"不能宣布，因为 P0-a 作为"代际混叠"从未被证明存在过。**
+`epoch` 那套机制逻辑正确、代价可忽略，但它防护的是一个没被观测到的场景。
+
+#### 七、但顺带发现了一个真的洞：`del_ram` 不递增 epoch
+
+这一条是加 `retired_hit` 判据时才显形的，比 13.28 简单得多，也更硬。
+
+`epoch` 原来**只在 `add_ram()` 里 `++`**。于是退役窗口（`del_ram` 已执行、
+`add_ram` 还没来）里：
+
+```c
+/* dispatch.c 快路径 */
+if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
+    c->ram->page_gen[c->pg] == c->gen) return c;
+```
+
+- `c->pa` / `c->flags`：还是旧值，全中
+- `c->ram_epoch == c->ram->epoch`：**没有任何东西递增过，成立**
+- `c->ram->page_gen[c->pg]`：`del_ram` 已经把 `page_gen` 置 NULL →
+  **`NULL[c->pg]`，host 侧 SIGSEGV**
+
+不是"读到错的 guest 内存"，是宿主进程直接死。修法是让 epoch 在
+`del_ram` 退出时也 `++`：任何按这个窗口翻译过的 block 立刻 `ram_epoch` 失配，
+在碰 `page_gen` 之前就被踢出去。已在 `q-p0a7` 落地并实测（p6）。
+
+`retired_hit` 的实测值是 **0**——这个窗口在当前负载下没被踩到。
+但它是**逻辑上一直开着的**，只是因为 `del_hit` 只有 5 次、且都发生在没有
+block 可查的启动期，所以没机会踩。这是"修了一个真的洞，但它不是现在卡住的因"，
+两句话都得说。
+
+#### 八、P0-a 的定级依据：`MEASURE.md:1536` 站不住
+
+那条 `fatal signal 11 [inside JIT]` 属于**第十轮 EL1 linear map**（`MEASURE.md:1491`
+的章节标题），现场是 `tbnz` 判定"在区间内"后 `ldr` 装了个补码当 addend——
+是 linmap emit 的三处编码 bug（`cmp` 污染 NZCV、`tbnz` 的 b40 位截断、
+`addr == T` 自减成 0），而且在独立 `hv-linux` runner 里，与 QEMU 的 RAM 槽位无关。
+那三条当时已修，该轮唯一失败项也留在 linmap 通道内，没有交付。
+
+**把那条 SIGSEGV 当作 P0-a 的现场，是我的误挂。**
+"del_ram 打在 ACTIVE vCPU 上"（`hit 168 of 341`）是另一条线——并发风险，
+它有实证（`tlb_race.c` 0.42% 跨界、168/341 命中），也已经由延迟失效 + 引擎自己的 stw 修掉。
+
+#### 九、诚实的最终账目
+
+| 项 | 结论 |
+|---|---|
+| 13.34 的"零命中" | ❌ **判据是空的**（三个出口全关），不是结论错 |
+| 重测后的 `epoch_stale` | 0（这次是真的 0） |
+| `ram_reuse` | 4（不是 341），全部 `live_blocks=0` |
+| 13.28 代际混叠假设 | ❌ **结案：前提不成立** |
+| `del_ram` 不递增 epoch | ⚠️ **真洞**，已修（`q-p0a7`），实测未触发 |
+| P0-a 定级依据 | ❌ 挂在 linmap 的现场上，不成立 |
+| 并发线（del 打 ACTIVE vCPU） | ✅ 有实证，已由延迟失效修掉 |
+
+#### 十、接下来该做的不是"验 P0-a"，是别的
+
+`system_reset` 循环（`nrun` v2）仍然值得做，但理由变了：
+不是"去触发 P0-a"（前提已证伪），而是**跨 boot 的回归探针**——
+`del_hit` / `ram_reuse` / `retired_hit` 这三个数现在有了基线（5 / 4 / 0），
+单进程连续 reset N 轮后这三个数应当线性增长、`retired_hit` 仍应为 0。
+一旦哪轮 `retired_hit > 0`，那就是真的踩到了第七节那个洞。
+
