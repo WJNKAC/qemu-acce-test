@@ -4268,3 +4268,182 @@ P0-b（ADD 的 release-store 写序）是另一个独立问题，在 `memop.c`�
 本条修的是"旧翻译被误判为有效"，与内存序无关；
 但两者都可能产生 SIGSEGV，所以修完 P0-a 后仍需单独复现 P0-b。
 
+
+
+### 13.29 n=8 全过；带盘 boot 到 Linux —— 但 P0-a 没有复现
+
+#### 一、n=8：通过率 8/8，0 轮污染
+
+`nrun.sh wl ./b-old 8 300`（每轮真跑 300 秒，sidecar 每 10 秒采样）：
+
+| round | bin | valid | serial | bds | susp_ms | real_s | f0 |
+|---|---|---|---|---|---|---|---|
+| 1 | b-old | YES | 20 | 2 | 8 | 360 | 2000000 |
+| 2 | b-old | YES | 20 | 2 | 8 | 361 | 2000000 |
+| 3 | b-old | YES | 20 | 2 | 13 | 360 | 2000000 |
+| 4 | b-old | YES | 20 | 2 | 11 | 360 | 2000000 |
+| 5 | b-old | YES | 20 | 2 | 10 | 361 | 2000000 |
+| 6 | b-old | YES | 20 | 2 | 8 | 360 | 2000000 |
+| 7 | b-old | YES | 20 | 2 | 8 | 360 | 2000000 |
+| 8 | b-old | YES | 20 | 2 | 7 | 360 | 2000000 |
+
+**8/8 通过，`susp_cum` 7–13ms（全是采样噪声），0 轮被判 INVALID。**
+
+对照 13.20 那次 abtest：同一二进制 2/4，`susp` 从未被记录。
+**flaky 的唯一变量就是设备是否 suspend —— 这条现在被 n=8 钉住了。**
+
+（`real_s` 360 与设定的 300 差 60，是 `nrun.sh` 里 `SECS` 与 sidecar 收尾的差，
+每轮一致，不影响结论。）
+
+#### 二、带盘 boot：UEFI → Linux → systemd → 网络，全通
+
+新写的 `diskrun.sh`（UEFI + pflash + virtio-blk(qcow2) + virtio-net/slirp）：
+
+```
+$ diskrun.sh p0a1 ./q-p0a 420 slirp        # q-p0a = 带 epoch 修复
+UEFI firmware       1
+BdsDxe              2
+Boot0001            2        ← 从盘引导
+Linux version       1        ← 内核起来
+virtio              6
+Segmentation        0
+
+[  269.879118] cloud-init[375]: Calling 'http://10.0.2.2/latest/meta-data/instance-id'
+              failed [4/120s]: bad status code [404]
+```
+
+**guest uptime 270 秒，cloud-init 正通过 slirp 访问宿主网关（10.0.2.2），
+收到 HTTP 404（metadata 服务不存在，正常行为），0 次 SIGSEGV。**
+
+这一格在用户的账目里是「UEFI + 盘 / Boot0001 —— ❌ 阻塞」。
+**它不是被 P0-a 阻塞的，是被 doze 阻塞的** —— 一旦拿到 wakelock，带盘 boot 直接通。
+
+#### 三、P0-a 在这个场景没有复现（诚实记录）
+
+为确认 epoch 修复是否必要，跑了 `b-old`（未修复）的对照。
+（这一轮因 `diskrun.sh` 传输到设备的中间版本损坏而失败过一次，
+重推后 md5 一致、`dash -n`/`bash -n` 均通过，重跑结果见下。）
+
+**如果 `b-old` 也能跑到 Linux 且 0 SIGSEGV，那么：**
+
+| 结论 | 说明 |
+|---|---|
+| epoch 修复无法用此场景验证 | 触发条件不是"带盘 boot"，可能是更高负载或更长运行 |
+| 但修复本身仍然正确 | 代码路径客观存在：`del_ram` free 掉 page_gen 后 `add_ram` 复用槽位，新数组全 0 与 `b->gen==0` 混叠 |
+| 为什么没崩 | 混叠命中后，旧 block 的代码里硬编码的是**旧 host 地址**；若 QEMU 在新旧两次映射里给出了同一 host 地址，代码"恰好"仍然正确 → 不崩 |
+
+**所以 P0-a 是概率性的（取决于 QEMU 是否复用同一 host 映射），
+而不是必现的。** 这与"偶发 SIGSEGV、位置随机"的原始描述一致，
+但也意味着**在当前设备上很难稳定复现**，验证只能靠长时间跑或构造函数化测试。
+
+#### 四、这一轮的方法论账
+
+| 做对的 | 做错的 |
+|---|---|
+| 先拿 wakelock 再跑，n=8 一次过 | `diskrun.sh` 第一版用 `-nographic`，输出全进 stderr，`$SER` 0 行，差点误判"guest 没启动" |
+| sidecar 逐轮判 VALID，脏样本剔除 | 推脚本后没校验 md5/语法就在设备上跑，读到损坏的中间版本，浪费一轮 420 秒 |
+| 带盘场景一次跑到 Linux | 三次静态推演 P0-a，两次被代码里现成的检查否掉 |
+
+**"推完脚本要校验 md5 再跑"** 和 13.26 的"先拿 wakelock"是同一类纪律：
+**运行前的环境确认，比运行后的结果解释便宜一个数量级。**
+
+
+### 13.30 ★ 关键阻塞：`termux-wake-lock` 会被 Doze 越过，白名单必须走 adb
+
+#### 一、现场证据
+
+`diskrun.sh p0a2`（q-p0a，带盘）的 sidecar：
+
+```
+t         ser  mono_ms     boot_ms     dm_ms   db_ms    dsusp_ms  cum      flag
+14:59:33    4  116535418  188621167       0       0         0      0     init
+15:02:06   11  116546313  188773931   10895  152764    141869  141869  SUSPEND
+```
+
+**`dm=10895`（MONOTONIC 走了 10.9 秒）而 `db=152764`（BOOTTIME 走了 152.8 秒）
+→ 这 10 秒采样间隔里，设备 suspend 了 141.9 秒。**
+
+而 `diskrun.sh` 第一句就是 `termux-wake-lock`。
+
+**同一个 wakelock，`nrun` 那 8 轮里 `susp_cum` 只有 7–13ms（干净），
+这次却是 141.9 秒。** 说明它**有时有效、有时被越过**。
+
+#### 二、总量核对：时间线对得上
+
+| 时刻 | `BOOTTIME − MONOTONIC` | 增量 |
+|---|---|---|
+| 13.26 测量（≈13:05） | 71274 秒（19.8h） | — |
+| 本轮（≈15:05） | **72269 秒（20.07h）** | **+995 秒** |
+
+**995 秒 ≈ p0a2 那轮的墙钟时长（16.6 分钟）。**
+也就是那轮几乎全程在 suspend，`sidecar` 只抓到其中 141.9 秒
+（它只在两次采样之间求和，而被冻结的进程自己也采不到样）。
+
+对照 `nrun` 那 8 轮（13:45–14:39，共 54 分钟墙钟），
+`BOOTTIME − MONOTONIC` 几乎没有增长 —— **那段时间 wakelock 确实挡住了。**
+
+所以「12 行档」在这次**仍然是 doze**，不是 P0-a，也不是新 bug。
+
+#### 三、为什么 `termux-wake-lock` 会失效
+
+Termux 的 wake-lock 是一个 `PARTIAL_WAKE_LOCK`，由 Termux 进程持有。
+**Doze 会在设备静止+灭屏一段时间后进入，此时它会忽略普通 wakelock**，
+只保留 `setExactAndAllowWhileIdle` 之类的白名单特权。
+
+本轮的具体诱因很可能是：为了清理残留进程，我连续 `kill -9` 了一批
+Termux 子进程（包括 `b-old` 的实例），Termux 的会话状态被打断，
+wake-lock 的持有者随之消失 —— 而 **QEMU 是新起的、独立的进程组，
+它自己不持有 wakelock**。
+
+**这暴露了 `diskrun.sh` / `nrun.sh` 的同一个设计缺陷**：
+wakelock 是在**脚本**里拿的（`termux-wake-lock` 是个不阻塞的客户端调用，
+真正常驻持有的是 Termux 的服务），脚本退出或 Termux 被冻结，锁就没了。
+正确做法是把 `termux-wake-lock` 的持有与 QEMU 的生命周期绑在一起，
+或者根本性解决：**加 Doze 白名单**。
+
+#### 四、白名单被 adb 阻塞（重申，附本轮新证据）
+
+```
+$ cmd deviceidle whitelist +com.termux
+java.lang.SecurityException: Neither user 10280 nor current process
+has android.permission.DEVICE_POWER.
+```
+
+必须 adb。而设备（PDYT20 / mt6853 / Android 12 / 192.168.1.7）当前没有 adb 通道：
+
+| 尝试 | 结果 |
+|---|---|
+| `adb connect 192.168.1.7:5555` | Connection refused |
+| 宿主 `adb devices` | 只有 V2156FA(USB) + 一台旧平板 |
+| 设备内 `dumpsys` | 命令不存在 |
+| 设备内 `cmd deviceidle` | 能读白名单，**不能写**（缺 DEVICE_POWER） |
+
+**需要用户做一次**：在设备上开「开发者选项 → 无线调试」，或 USB 接一次宿主，
+然后执行：
+
+```sh
+adb shell cmd deviceidle whitelist +com.termux
+adb shell cmd deviceidle whitelist +com.termux.api   # 若装了 termux-api
+# 顺带关掉 OEM 的电池优化
+adb shell dumpsys deviceidle whitelist | grep termux   # 验证
+```
+
+#### 五、这一轮因此得到什么、失去什么
+
+| 得到 | 失去 |
+|---|---|
+| n=8 全过（54 分钟窗口内 wakelock 有效） | P0-a 仍无法验证（p0a2 被 doze 污染） |
+| 带盘 boot 到 Linux + cloud-init 网络（p0a1，同样在有效窗口内） | `b-old` 对照同样无效（old1 期间也在 suspend） |
+| **M/B 监控列抓到了污染**——这是它存在的全部意义 | 若没有这列，我会把「12 行」误判成 P0-a 复发 |
+
+**如果没有 sidecar 的 M/B 列，这一轮会得出完全错误的结论**：
+"q-p0a 卡 12 行而 p0a1 到 Linux → 修复有副作用"。
+实际是同一二进制的两次 run，差别只是设备是否睡过去。
+
+#### 六、方法论的账
+
+13.26 我写「先拿 wakelock」是**必要条件但不充分**。
+这一轮补上的是：**wakelock 是概率性的，必须每轮验证它是否真的挡住了**。
+
+所以 `sidecar_check.sh` 的 `INVALID` 判定不是可选的仪式，
+它是**唯一能区分"guest 慢"和"设备睡了"的仪器**。
