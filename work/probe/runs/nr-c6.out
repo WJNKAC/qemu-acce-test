@@ -1,0 +1,26 @@
+=== nrun2 tag=c6 bin=q-p0a8 rounds=4 smp=2 secs/round=100 ===
+round 1: net  mile_n=1 systemd_n=75 rss=1013292KB
+round 2: net  mile_n=2 systemd_n=154 rss=1027360KB
+round 3: net  mile_n=3 systemd_n=232 rss=1033720KB
+round 4: net  mile_n=4 systemd_n=307 rss=1070044KB
+
+=== 汇总 (milestone=net) ===
+轮数=4 成功到 net=4/4
+serial: lines=2339  mile_n=4  linux_n=4  systemd_n=307
+dsusp_cum_ms=1  verdict=VALID
+rss@mile round1=1013292KB  round4=1070044KB  delta=56752KB
+retired_hit(总)=0   del 探针行=21
+末次 del 计数: henge: del#1344 defer=1 del_hit=8 del_miss=1335 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+（验收：del_hit 应随轮数增长；retired_hit 必须 0；rss delta 是序列泄漏的唯一读法）
+
+=== C6: 每轮 DHCP 结果 ===
+enp0s1 拿到 10.x 地址的行数=0   标记 False 的行数=0   (轮数=4)
+  enp0s1 | True |         10.0.2.15          | 255.255.255.0 | global | 52:54:00:12:34:56 |
+  enp0s1 | True | fec0::5054:ff:fe12:3456/64 |       .       |  site  | 52:54:00:12:34:56 |
+  enp0s1 | True | fe80::5054:ff:fe12:3456/64 |       .       |  link  | 52:54:00:12:34:56 |
+  enp0s1 | True |         10.0.2.15          | 255.255.255.0 | global | 52:54:00:12:34:56 |
+  enp0s1 | True | fec0::5054:ff:fe12:3456/64 |       .       |  site  | 52:54:00:12:34:56 |
+  enp0s1 | True | fe80::5054:ff:fe12:3456/64 |       .       |  link  | 52:54:00:12:34:56 |
+  enp0s1 | True |         10.0.2.15          | 255.255.255.0 | global | 52:54:00:12:34:56 |
+  enp0s1 | True | fec0::5054:ff:fe12:3456/64 |       .       |  site  | 52:54:00:12:34:56 |
+判定: 有 4 轮没拿到地址 —— C6 复现

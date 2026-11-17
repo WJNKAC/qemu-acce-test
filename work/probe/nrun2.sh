@@ -17,9 +17,10 @@
 # 用法：nrun2.sh <tag> <bin> <rounds> [secs_per_round] [smp] [milestone]
 #
 # milestone 决定每轮 reset 的时机，直接决定这个测试能回答什么：
-#   bds      UEFI BDS 起来就 reset        ~6s/轮   最快，测 UEFI 阶段的槽位语义
-#   linux    "Linux version" 出现         ~14s/轮  测内核早期 + P0-a/retired_hit
-#   systemd  systemd[1] 出现              ~110s/轮 测 C6（重启丢网）必须用它
+#   bds      UEFI BDS 起来就 reset        ~8s/轮   最快，测 UEFI 阶段的槽位语义
+#   linux    "Linux version" 出现         ~14s/轮  测内核早期 + retired_hit
+#   net      cloud-init 的 ci-info 网卡表 ~76s/轮  **C6 用它**：表里有 DHCP 结果
+#   systemd  multi-user.target            ~110s/轮 端到端可用
 #
 set -u
 TAG=${1:?tag}
@@ -32,8 +33,13 @@ MILE=${6:-linux}
 case "$MILE" in
     bds)     MPAT='BdsDxe: starting' ;;
     linux)   MPAT='Linux version' ;;
-    systemd) MPAT='systemd\[1\]' ;;
-    *) echo "bad milestone: $MILE (bds|linux|systemd)"; exit 2 ;;
+    # ci-info 的网卡表头。cloud-init 每次 boot 打一次，t≈76s，
+    # 表里的 enp0s1 行直接给出 DHCP 拿到的地址或 False。
+    net)     MPAT='ci-info: | Device |' ;;
+    # 不用 'systemd\[1\]' —— boot 过程中每个 unit 都打一行，里程碑判据
+    # 就不唯一了（第一次试跑 round 1 就数到 4，等于没等）。
+    systemd) MPAT='Reached target multi-user.target' ;;
+    *) echo "bad milestone: $MILE (bds|linux|net|systemd)"; exit 2 ;;
 esac
 
 # 验收（每次运行都打印）：
@@ -59,7 +65,9 @@ MPORT=${MPORT:-4455}
 [ -x "$BIN" ] || { echo "MISSING $BIN"; exit 3; }
 [ -x "$H/vclk" ] || { echo "MISSING vclk"; exit 3; }
 
-cp -f $H/vars0.img "$VARS" 2>/dev/null
+# 基线 vars0.img 是 444（防误当工作文件）；toybox 的 cp -f 会
+# 保留源权限，所以目标必须显式放开写权限，否则 QEMU 打不开 varstore。
+cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 qemu-img create -f qcow2 -b $H/deb12.qcow2 -F qcow2 "$DISK" >/dev/null 2>&1 || \
     cp -f $H/deb12.qcow2 "$DISK"
 rm -f "$LOG" "$ERR" "$SC"
@@ -139,6 +147,14 @@ while [ $ROUND -lt $ROUNDS ]; do
     fi
     sample $ROUND
     RSS=$(tail -1 "$SC" | awk '{print $6}')
+    # 掉 UEFI Shell 是一个假阳性源：BdsDxe 没找到可引导项时会停在
+    # "UEFI Interactive Shell"，而那里既没有 Linux version 也没有 ci-info，
+    # 看起来完全像"boot 失败"。必须单独标出来，否则会被当成 C6。
+    # （实测发生一次：Boot0001 从 "UEFI Misc Device" 变成了
+    #   "EFI Internal Shell"，nvram 里的引导项变了。）
+    if [ "$RES" = timeout ] && grep -aq 'UEFI Interactive Shell' "$LOG" 2>/dev/null; then
+        RES=UEFI-SHELL
+    fi
     echo "round $ROUND: $RES  mile_n=$(cnt "$MPAT") systemd_n=$(cnt 'systemd\[1\]') rss=${RSS}KB"
 
     [ $ROUND -ge $ROUNDS ] && break
@@ -175,3 +191,30 @@ echo "rss@mile round1=${RSS1}KB  round$ROUND=${RSSN}KB  delta=$((RSSN - RSS1))KB
 echo "retired_hit(总)=$RET   del 探针行=$SCPLUS"
 echo "末次 del 计数: $DH"
 echo "（验收：del_hit 应随轮数增长；retired_hit 必须 0；rss delta 是序列泄漏的唯一读法）"
+
+# ---- C6 专用：每轮 DHCP 结果 ----
+# ci-info 的网卡表每次 boot 打一次，一行一台设备。判据是 enp0s1 那一行：
+#   | enp0s1 | True  | 10.0.2.15 | ...   ← DHCP 成功
+#   | enp0s1 | False | .         | ...   ← 没起来（C6 的症状）
+# 这套判据不需要登录、不需要抓包、不需要改镜像 —— 它一直就在 serial 里，
+# 只是我之前只把它当"cloud-init 噪声"（13.34 的 diff 分类里正是这么写的）。
+if [ "$MILE" = net ]; then
+    echo
+    echo "=== C6: 每轮 DHCP 结果 ==="
+    # 不要写死空格宽度。第一版写成 'enp0s1 | True  | 10\.'（True 后两个空格），
+    # 而实际是 '| True |         10.0.2.15'（一个空格 + 列对齐），永远不匹配，
+    # 于是 4/4 全部拿到地址的一轮被判定成"C6 复现"。用 .* 跨过对齐。
+    # 这就是"判据非空"的第三次具体化：非空、唯一、而且**匹配要宽于格式**。
+    UP=$(grep -ac 'enp0s1 | True.*10\.0\.2\.15' "$LOG" 2>/dev/null)
+    DOWN=$(grep -ac 'enp0s1 | False' "$LOG" 2>/dev/null)
+    echo "enp0s1 拿到 10.0.2.15 的次数=$UP   标记 False 的次数=$DOWN   轮数=$ROUND"
+    echo "（每轮 ci-info 打一次网卡表，所以 UP 应等于轮数）"
+    grep -a 'enp0s1 | True.*10\.0\.2\.15' "$LOG" 2>/dev/null | sed -E 's/.*ci-info: //' | head -$ROUND
+    if [ "$UP" -ge "$ROUND" ]; then
+        echo "判定: $UP/$ROUND 轮拿到 IPv4 —— 本轮未复现 C6"
+    elif [ "$UP" -eq 0 ]; then
+        echo "判定: 0/$ROUND 拿到 IPv4 —— 需要确认是 C6 还是 boot 本身失败（看 UEFI-SHELL / lines）"
+    else
+        echo "判定: $UP/$ROUND 拿到 IPv4 —— C6 部分复现"
+    fi
+fi

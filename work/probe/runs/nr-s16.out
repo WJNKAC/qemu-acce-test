@@ -1,0 +1,26 @@
+=== nrun2 tag=s16 bin=q-p0a8 rounds=16 smp=2 secs/round=60 ===
+round 1: linux  mile_n=1 systemd_n=0 rss=458796KB
+round 2: linux  mile_n=2 systemd_n=0 rss=467316KB
+round 3: linux  mile_n=3 systemd_n=0 rss=472460KB
+round 4: linux  mile_n=4 systemd_n=0 rss=472972KB
+round 5: linux  mile_n=5 systemd_n=0 rss=507192KB
+round 6: linux  mile_n=6 systemd_n=0 rss=506732KB
+round 7: linux  mile_n=7 systemd_n=0 rss=507652KB
+round 8: linux  mile_n=8 systemd_n=0 rss=507348KB
+round 9: linux  mile_n=9 systemd_n=0 rss=507372KB
+round 10: linux  mile_n=10 systemd_n=0 rss=507592KB
+round 11: linux  mile_n=11 systemd_n=0 rss=506884KB
+round 12: linux  mile_n=12 systemd_n=0 rss=507272KB
+round 13: linux  mile_n=13 systemd_n=0 rss=506024KB
+round 14: linux  mile_n=14 systemd_n=0 rss=507592KB
+round 15: linux  mile_n=15 systemd_n=0 rss=506532KB
+round 16: linux  mile_n=16 systemd_n=0 rss=507300KB
+
+=== 汇总 (milestone=linux) ===
+轮数=16 成功到 linux=16/16
+serial: lines=4186  mile_n=16  linux_n=16  systemd_n=0
+dsusp_cum_ms=1  verdict=VALID
+rss@mile round1=458796KB  round16=507300KB  delta=48504KB
+retired_hit(总)=0   del 探针行=57
+末次 del 计数: henge: del#3648 defer=1 del_hit=20 del_miss=3627 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+（验收：del_hit 应随轮数增长；retired_hit 必须 0；rss delta 是序列泄漏的唯一读法）

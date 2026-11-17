@@ -1,0 +1,16 @@
+=== rssfind tag=a smp=2 milestone=linux rounds=6 ===
+round 1: total_rss=359032KB  mile_n=1
+round 2: total_rss=300704KB  mile_n=2
+round 3: total_rss=307052KB  mile_n=3
+round 4: total_rss=307548KB  mile_n=4
+round 5: total_rss=349272KB  mile_n=5
+round 6: total_rss=317940KB  mile_n=6
+
+=== 同一区域跨轮对比（只列第1轮与最后一轮都在、且涨幅 top 10）===
+       +36 KB  /data/local/tmp/q-p0a8  (末轮 10164 KB)
+       +16 KB  [anon:.bss]  (末轮 4248 KB)
+        +0 KB  region  (末轮 0 KB)
+     -1444 KB  [anon:libc_malloc]  (末轮 61636 KB)
+    -34656 KB  [anon]  (末轮 237528 KB)
+
+原始数据: /data/local/tmp/rf-a.smaps

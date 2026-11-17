@@ -27,7 +27,9 @@ DISK=$H/$TAG.qcow2
 [ -x "$BIN" ] || { echo "MISSING $BIN"; exit 3; }
 [ -x "$H/vclk" ] || { echo "MISSING vclk"; exit 3; }
 
-cp -f $H/vars0.img "$VARS" 2>/dev/null
+# 基线 vars0.img 是 444（防误当工作文件）；toybox 的 cp -f 会
+# 保留源权限，所以目标必须显式放开写权限，否则 QEMU 打不开 varstore。
+cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 qemu-img create -f qcow2 -b $H/deb12.qcow2 -F qcow2 "$DISK" >/dev/null 2>&1 || \
     cp -f $H/deb12.qcow2 "$DISK"
 rm -f "$LOG" "$ERR" "$SC"
