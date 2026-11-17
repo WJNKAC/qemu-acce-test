@@ -3345,3 +3345,120 @@ accel/henge 文件数: 39    ✓
 13.1–13.20 的全部测量都是对着这个版本取的，`gt_recalc_timer` /
 `gt_update_irq` 的位置和语义都可能随版本变，而移植层的接线都建在它们上面。
 悄悄跟 upstream 走 = 拿没校准的底座测数据。
+
+
+### 13.22 ★ 重大纠正：我的修复从未生效；QEMU 的 timer 其实一直在 arm
+
+用户指出 13.20 的三个问题（abtest 是单调恶化序列、timer 项关早了、flaky 基线上不能转 P0），
+并给出双轨假设。顺着 D2 源码核查，发现了比"双轨"更严重的事实：
+
+#### 一、`sysreg_external` 恒为 1，内联路径是死代码
+
+`henge-accel.c:860`，accel init 时**无条件**调用：
+
+```c
+hv_engine_set_external(h->m, 1, 1);
+```
+
+于是 `write_reg()`（`engine/core/sysreg.c:234`）第一句就拦下：
+
+```c
+static int write_reg(HvCpu *cpu, uint32_t reg, uint64_t v) {
+    HvMachine *m = cpu->m;
+    if (m->sysreg_external && (is_id_group(reg) || is_timer_ctl(reg)))
+        return HV_SYSREG_EXTERNAL;      /* ← CNTV_* 全部走这里 */
+    switch (reg) {
+    ...
+    case R(3,3,14,3,2): cpu->cntv_cval = v; cpu->virt_timer_dirty = 1; break;   /* 死代码 */
+```
+
+`is_timer_ctl()` 覆盖 `crm == 2 || crm == 3`，即 **CNTP_* 和 CNTV_* 全部**。
+
+**结论：`sysreg.c:319-322` 那几行内联写永远不可达。**
+我加的 `virt_timer_dirty = 1` 永远不会执行 →
+`hv_engine_take_vtimer()` / `hv_engine_peek_vtimer()` **永远返回 false** →
+**13.18 和 13.20 的整个修复从未生效。**
+
+#### 二、slept 32768→512 是混淆变量
+
+既然修复没有执行路径，slept 的变化必然来自别处：
+guest 走了不同路径（4/12/20 三档）、环境漂移、窗口长度不同。
+**13.18 里"写侧同步生效"的结论作废。**
+
+#### 三、QEMU 的 timer 一直在 arm —— 我早前的诊断是错的
+
+seam 路径**真的调用 writefn**：
+
+```c
+henge_cpreg_write(env, ri, value)         /* henge-cpu.c:330 */
+  → ri->writefn(env, ri, value)           /* 走 QEMU 的 writefn */
+  → gt_virt_cval_write → gt_cval_write
+  → gt_recalc_timer(cpu, GTIMER_VIRT)     /* 无条件 */
+```
+
+**所以 `env->cp15.c14_timer[]` 从来不是 0。** 13.16 那句
+"QEMU 侧 cval 恒为 0，timer 从未 arm" 是**错的**。
+
+#### 四、QEMU 自带的 trace 给出了硬数据（零代码改动）
+
+发现 build 里编了 trace 点，backend 是 `simple`，输出到 stderr：
+
+```
+-trace enable=arm_gt_recalc -trace enable=arm_gt_update_irq
+```
+
+12 行档的一次 run（60s）：
+
+```
+arm_gt_recalc     gt recalc: timer 1 next tick 0xa5b35394     ← timer 1 = GTIMER_VIRT
+arm_gt_update_irq gt_update_irq: timer 1 irqstate 0   ×4
+```
+
+- **timer 确实被 arm**：`next tick = 0xa5b35394 = 2779703700`
+- 2779703700 / 62.5e6 = **44.5 秒**
+- 整个窗口 `irqstate` **恒为 0**，且**只有 1 次 recalc**（没有第二次 = 从未 fire）
+
+4 行档的一次 run（190s）：trace **一行都没有**，serial 停在 4 行
+→ **guest 还没编程 timer 就卡住了**，是完全不同的故障模式。
+
+#### 五、现在真正的问题变成了三个
+
+| # | 问题 | 证据 |
+|---|---|---|
+| **A** | 12 行档：timer arm 到 44.5 秒，但 190 秒内从未 fire | 1 次 recalc、irqstate 恒 0 |
+| **B** | 4 行档：guest 根本没走到 timer 编程 | trace 全空、serial=4 |
+| **C** | 44.5 秒是否合理 | UEFI BDS 超时是 3–5 秒量级 |
+
+**A 的可能机制**（用户早前指出的频率域，现在有硬数据支撑）：
+`gt_get_countervalue()` 用 `qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)`，
+而引擎的 `counter()` 是 `mach_absolute_time()`（host 时钟）。
+`henge_timer_calibrate()` 只在 setup/resume 时对齐一次（算 epoch）。
+**如果 virtual clock 与 host clock 速率不同（VM 停过就漂），deadline 就系统性错位。**
+44.5 秒 vs 期望的 3–5 秒，差 10 倍量级，与这种漂移一致。
+
+#### 六、用户的双轨假设：机制确认了一半
+
+用户假设"CNTV 有的写进 QEMU、有的只进引擎"。实际机制是：
+**不是同一个 encoding 有两条路，而是 `sysreg_external` 这个全局开关决定了走哪条 —— 而它恒为 1，所以全部走 seam。**
+
+所以"双轨"在 4/12/20 的 flaky 上不成立（它不可能时而 seam 时而内联）。
+flaky 的来源是别的：4 行档和 12 行档是**两种不同的故障**，
+不是同一个故障的两种时机。
+
+#### 七、这一轮的方法论收获
+
+1. **先查符号可达性，再谈修复。** 我加的代码在死路径上，三轮实验全部无效。
+   判据：`grep` 写路径的前置 `if` 条件，而不是只看 `switch` 里的 case。
+2. **QEMU 自带 trace 是最便宜的探针**（零代码改动、已有 trace 点、`-trace enable=`）。
+   前面花了多轮加自定义打印，其实 `arm_gt_recalc` / `arm_gt_update_irq` 一直都在。
+3. **slept 这类计数不能跨 run 比较** —— 它依赖 guest 执行路径，不是纯性能指标。
+
+#### 八、下一步（顺序已修正）
+
+| # | 内容 | 依据 |
+|---|---|---|
+| 1 | 撤掉无效的 13.18/13.20 改动（peek/take/push/dirty），保留干净的 v11.1.3 + 原有 seam | 死代码无价值，且 push 有 BQL 风险 |
+| 2 | 用 `-trace enable=arm_gt_*` 跑 12 行档 + 190 秒，确认 timer 是否 fire | A |
+| 3 | 若 fire 但 irqstate 仍 0 → 查 GIC PPI 27 使能（`GICR_ISENABLER0`） | A |
+| 4 | 若永不 fire → 查 virtual clock 与 host clock 的速率差（epoch 漂移） | C |
+| 5 | 4 行档单独查（`StartImage → Aborted`），与 timer 无关 | B |
