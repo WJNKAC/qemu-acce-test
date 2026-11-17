@@ -4773,3 +4773,138 @@ vivo `MT6833V/ZA` 与 OPPO `mt6853` 都报 `13000000`，且实测速率 1:1 吻�
 **这两个平台的计时手段必须不同**：vivo 的 adb shell 没有 python3
 （`/proc/uptime` 可读），PDYT20 的 Termux 反过来（`/proc/uptime`
 `Permission denied`，python3 可用）。写工具时要按平台选。
+
+
+### 13.34 ★★★ P0-a 的三项欠账结清：RSS 无差异、diff 无信号、探针零命中
+
+用户连续三次要求的三笔账，这轮一次做完。
+
+#### 一、RSS 对比（数据在 sidecar 里躺了三轮）
+
+| run | 起始 | 峰值 | 终值 | 增长 |
+|---|---|---|---|---|
+| p0a4（q-p0a，带盘） | 788,276 KB | 1,009,780 | **1,011,992** | +223,716 |
+| old4（b-old，带盘） | 783,756 KB | 1,007,420 | **1,010,936** | +223,664 |
+
+**终值差 1,056 KB（0.10%）。** 两条曲线形状一致：
+先涨 ~220 MB（guest 页表 + 内核镜像占用），然后趋平。
+
+**leak 维度结案：没有可观测的 RSS 差异。**
+
+#### 二、44 行 diff（实际是 122 行，规范化后）
+
+去掉了 kernel 时间戳 `[ 225.650072]` 与 cloud-init 的 wall 时间后：
+
+| 类别 | 行数 | 性质 |
+|---|---|---|
+| `cloud-init ci-info` 表格（PID / 网卡表） | 24 | 非确定性 |
+| `cloud-init` metadata 超时重试 | 12 | 非确定性（网络） |
+| `apparmor DENIED dhclient exec /usr/bin/true` | 8 | cloud-init 正常行为 |
+| `rtc-efi setting system clock` | 2 | 时间不同 |
+| 模块加载顺序（`fuse` / `loop`） | 4 | systemd 并行顺序 |
+| systemd 单元完成顺序 | 若干 | 并行顺序 |
+| 耗时数字（`160ms` vs `164ms`） | 若干 | 抖动 |
+
+**`segfault|panic|oops|kernel BUG|unable to handle|general protection` 命中 0 次。**
+
+里程碑完全一致：`bds=2 boot=2 linux=1 systemd=79/78 reach=20`。
+
+**diff 结案：没有任何结构性差异。**
+
+#### 三、P0-a 的原 reproducer（挖到了）
+
+在 `QEMU-BACKEND.md:1700` 找到当初的现场：
+
+```
+henge: VIOLATION del_ram flushed ACTIVE cpu 0 (hit 168 of 341)
+Shell>                                    ← 照样起来了
+```
+
+**341 次 romd toggle，168 次命中一个正在跑的 vCPU（49%）。**
+机制：`pflash_write()` 每次 CFI 命令序列都 `set_romd()`，
+每次切换是一次 `region_del` + `region_add`。
+
+**这就是 P0-a 的 reproducer 形态：单轮带盘 boot 里 romd toggle 341 次，
+即 341 次槽位复用机会。** 不需要跨 boot 序列 —— 单轮就够。
+
+（这也纠正了用户的假设：跨 reset 序列不是唯一形态，
+单轮 boot 里 romd 已经把槽位反复回收了几百次。）
+
+#### 四、加了直接判据探针，实测零命中
+
+新增三个计数器（`machine.h` 的 `HvStats`）：
+
+| 计数器 | 含义 |
+|---|---|
+| `ram_reuse` | `add_ram` 复用退役槽位的次数（= 混叠机会数） |
+| `epoch_stale` | 某个 block 因 `ram_epoch != ram->epoch` 被判失效的次数 |
+| `epoch_high_water` | 见过的最老/最新 epoch 差 |
+
+`epoch_stale` 加在**主查找路径** `hv_block_find()`（`machine.h:358`）里 ——
+这是 `lookup()` 两次都会走的地方，而不是我最初加的两个次要位置。
+
+带盘 boot 跑 140 秒（`bds=2 linux=1 lines=585`）：
+
+```
+=== P0-a STALE 探针 ===
+（空 = 主查找路径上也没有混叠）
+```
+
+**一次都没命中。**
+
+#### 五、为什么零命中 —— 13.28 的假设错了
+
+`hv_block_find` 的匹配条件是：
+
+```c
+if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) return b;
+```
+
+其中 `gen` 是新 region 的 `page_gen[pg]`，`del` 后 `add` 后是 **0**。
+混叠要成立，必须 `b->gen == 0`，即**旧 block 生于该页的第一次翻译、
+且该页从未被写过**。
+
+而 `page_gen[pg]` 唯一的递增点是 `hv_invalidate_code()`（`machine.c:365`）：
+
+```c
+r->code_pages[pg] = 0;
+__atomic_add_fetch(&r->page_gen[pg], 1, __ATOMIC_SEQ_CST);
+```
+
+**pflash varstore 是写频繁的**：每次 CFI 命令写都写它，每次写都让
+`page_gen[pg]` 递增。所以旧 block 的 `b->gen` 早就不是 0 了。
+
+```
+旧 block b->gen = 5（该页被写过 5 次）
+新 region page_gen = 0（全新 calloc）
+5 == 0 不成立 → 不命中 → 我的 epoch 检查根本不会被走到
+```
+
+**所以 13.28 那条"复用槽位的 page_gen 归零与旧 gen==0 混叠"的路径，
+在 pflash 这种写频繁的 region 上不成立。** 它需要的是一个
+**只读、且从未被写过、却被 del+add 的 RAM region**。
+
+#### 六、诚实的最终账目
+
+| 项 | 结论 |
+|---|---|
+| RSS / leak 维度 | ✅ 无差异（0.10%），结案 |
+| serial diff | ✅ 无结构性差异，结案 |
+| P0-a 原 reproducer | ✅ 找到了：单轮带盘 boot，romd toggle 341 次 |
+| P0-a 探针（主路径） | ✅ 已加，**实测 0 次命中** |
+| 13.28 假设 | ❌ **经实测否定**（paged 写频繁时 gen 不归零） |
+| epoch 修复 | ⚠️ 逻辑无害，但**没有修复任何可观测的 bug** |
+
+**"P0-a 已修"不能宣布，而且现在连"P0-a 存在"都缺乏证据。**
+原来的 VIOLATION 探针测的是"del_ram 时 CPU 正在跑"（并发风险），
+那是另一条线，和代际混叠不是同一个东西。
+
+要重新审视的问题：**当初定位 P0-a 为 SIGSEGV 级，依据是哪个现场？**
+如果依据是 `MEASURE.md:1536` 那条 `fatal signal 11 [inside JIT]`，
+那它是 **linmap 实验**的产物（`cmp` 污染 NZCV / `tbnz` 编码截断），
+与 ROM 槽位复用无关 —— 而那三条已经修掉了。
+
+这是本轮最该记住的一条：**探针位置错了会给出干净的假阴性。**
+第一次把 `epoch_stale` 加在两个次要检查点，跑出 0，
+我差点又写"P0-a 不触发"；直到把它加到 `hv_block_find()`（主路径）
+才确认 0 是真实的 —— 但原因不是"没机会"，而是"前提不成立"。

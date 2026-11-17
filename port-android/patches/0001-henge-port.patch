@@ -980,10 +980,10 @@ index 0000000000..a73da9a5c9
 +#endif
 diff --git a/accel/henge/engine/core/dispatch.c b/accel/henge/engine/core/dispatch.c
 new file mode 100644
-index 0000000000..9841465ad5
+index 0000000000..a71672f94a
 --- /dev/null
 +++ b/accel/henge/engine/core/dispatch.c
-@@ -0,0 +1,1188 @@
+@@ -0,0 +1,1247 @@
 +#include "dispatch.h"
 +
 +#include <mach/mach.h>
@@ -1129,11 +1129,38 @@ index 0000000000..9841465ad5
 +    HvBlock *c = jc[j].va == va ? jc[j].b : NULL;
 +    if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
 +        c->ram->page_gen[c->pg] == c->gen) return c;
++    if (c && c->pa == pa && c->flags == flags && c->ram_epoch != c->ram->epoch) {
++        /*
++         * P0-a 的正面证据：如果不看 ram_epoch，上面那个 if 就会命中一个
++         * 按**已消失的 host 内存**翻译出来的 block，然后跳进去执行。
++         *
++         * 即时打印而不是攒到退出：QEMU 在 henge 下没有 accel cleanup 钩子，
++         * hv_machine_free() 从不被调用 —— 攒着就永远看不到。
++         * 前 20 次全打，之后每 100 次打一次（避免刷爆）。
++         */
++        m->stats.epoch_stale++;
++        if (c->ram->epoch - c->ram_epoch > m->stats.epoch_high_water)
++            m->stats.epoch_high_water = c->ram->epoch - c->ram_epoch;
++        if (getenv("HV_P0A_STATS") &&
++            (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0)) {
++            fprintf(stderr, "henge-p0a: STALE-hit #%llu va=%llx pa=%llx "
++                    "block_epoch=%u ram_epoch=%u (delta %u)\n",
++                    (unsigned long long)m->stats.epoch_stale,
++                    (unsigned long long)va, (unsigned long long)pa,
++                    c->ram_epoch, c->ram->epoch, c->ram->epoch - c->ram_epoch);
++        }
++    }
 +    uint32_t h = hash_of(va, pa, flags);
 +    HvRam *ram = hv_ram_lookup(m, pa);
 +    uint64_t pg = (pa - ram->pa) >> HV_TLB_PAGE_BITS;
 +    uint32_t gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
++    uint64_t stale0 = m->stats.epoch_stale;   /* P0-a: hv_block_find 里的混叠计数 */
 +    HvBlock *b = find(m, h, va, pa, flags, gen);
++    if (m->stats.epoch_stale != stale0 && m->stats.epoch_stale <= 20)
++        fprintf(stderr, "henge-p0a: STALE-find #%llu va=%llx pa=%llx "
++                "(这条路径旧代码会返回一个按已消失 host 内存翻译的 block)\n",
++                (unsigned long long)m->stats.epoch_stale,
++                (unsigned long long)va, (unsigned long long)pa);
 +    if (b) {
 +        jc[j].va = va, jc[j].b = b;
 +        return b;
@@ -1745,6 +1772,23 @@ index 0000000000..9841465ad5
 +        fprintf(stderr, "  user light fills: shared region %.0fK/s, elsewhere %.0fK/s\n", RATE(light_region[0]) / 1e3, RATE(light_region[1]) / 1e3);
 +        fprintf(stderr, "  code-page protects/s: none %.0f, one entry %.0f, whole-TLB scans %.0f\n", RATE(protect_kind[0]),
 +                RATE(protect_kind[1]), RATE(protect_kind[2]));
++        /*
++         * P0-a 的直接判据。这三个数是累积值，不是速率 —— 判"是否发生过"，
++         * 不是判"多频繁"。
++         *
++         *   ram_reuse    > 0  槽位复用发生过（带盘 boot 必然几百次）
++         *   epoch_stale  = 0  **旧代码不会误判任何一个 block** ——
++         *                     说明 P0-a 的混叠路径在这轮里从未被走到
++         *   epoch_stale  > 0  走到过 N 次；旧代码会跳进 N 个按已消失的
++         *                     host 内存翻译出来的 block。崩不崩取决于
++         *                     QEMU 是否恰好复用了同一 host 映射。
++         *
++         * 这条比 SIGSEGV 可靠：SIGSEGV 是彩票，这是命中计数。
++         */
++        fprintf(stderr, "  P0-a: ram_reuse %llu, epoch_stale %llu, epoch_high_water %llu\n",
++                (unsigned long long)m->stats.ram_reuse,
++                (unsigned long long)m->stats.epoch_stale,
++                (unsigned long long)m->stats.epoch_high_water);
 +        fprintf(stderr, "  fast resume refused/s: state %.0f, exit request %.0f, interrupt %.0f, timer %.0f, not cached %.0f\n", RATE(fr_fail[0]),
 +                RATE(fr_fail[1]), RATE(fr_fail[2]), RATE(fr_fail[3]), RATE(fr_fail[4]));
 +        fprintf(stderr, "  WFE waits in place %.0f/s; exits chained as placed %.0f/s; SVC/ERET resumed in place %.0f/s\n", RATE(wfe_waits),
@@ -1816,6 +1860,21 @@ index 0000000000..9841465ad5
 +        if (b->ram_epoch != b->ram->epoch ||
 +            __atomic_load_n(&b->ram->page_gen[b->pg], __ATOMIC_ACQUIRE) != b->gen ||
 +            m->slot_xpa[idx]) {
++            /* 这里更严重：旧代码会把这个 slot 链到一个用旧 host 内存
++               翻译出来的 block 上，然后真的跳过去。计一次。 */
++            if (b->ram_epoch != b->ram->epoch) {
++                m->stats.epoch_stale++;
++                if (b->ram->epoch - b->ram_epoch > m->stats.epoch_high_water)
++                    m->stats.epoch_high_water = b->ram->epoch - b->ram_epoch;
++                if (getenv("HV_P0A_STATS") &&
++                    (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0)) {
++                    fprintf(stderr, "henge-p0a: STALE-chain #%llu va=%llx "
++                            "block_epoch=%u ram_epoch=%u\n",
++                            (unsigned long long)m->stats.epoch_stale,
++                            (unsigned long long)b->va,
++                            b->ram_epoch, b->ram->epoch);
++                }
++            }
 +            pthread_mutex_unlock(&m->tr_mu);
 +            return;
 +        }
@@ -2549,10 +2608,10 @@ index 0000000000..c5ecd95293
 +#endif
 diff --git a/accel/henge/engine/core/machine.c b/accel/henge/engine/core/machine.c
 new file mode 100644
-index 0000000000..8481af5079
+index 0000000000..c9efa49b6a
 --- /dev/null
 +++ b/accel/henge/engine/core/machine.c
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,551 @@
 +#include "machine.h"
 +
 +#include <mach/mach_time.h>
@@ -2859,6 +2918,9 @@ index 0000000000..8481af5079
 +    for (i = 0; i < m->nram; i++) {
 +        if (!m->ram[i].host && !m->ram[i].size) {
 +            r = &m->ram[i];
++            /* P0-a 判据：这是"旧 block 可能与新 page_gen 混叠"的一次机会。
++               romd toggle 每轮带盘 boot 341 次，全部走这里。 */
++            m->stats.ram_reuse++;
 +            break;
 +        }
 +    }
@@ -3103,10 +3165,10 @@ index 0000000000..8481af5079
 +}
 diff --git a/accel/henge/engine/core/machine.h b/accel/henge/engine/core/machine.h
 new file mode 100644
-index 0000000000..d4ae11d4af
+index 0000000000..eaa4b29aa8
 --- /dev/null
 +++ b/accel/henge/engine/core/machine.h
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,454 @@
 +#ifndef HENGEVM_MACHINE_H
 +#define HENGEVM_MACHINE_H
 +
@@ -3179,6 +3241,16 @@ index 0000000000..d4ae11d4af
 +/* Counters for --stats: where the time goes. */
 +typedef struct HvStats {
 +    uint64_t blocks, translations, block_flushes;
++    /* P0-a 的三个直接判据（比 SIGSEGV 彩票可靠得多）。
++     *
++     * ram_reuse：add_ram 复用一个退役槽位的次数。每次 romd toggle 至少一次，
++     *   单轮带盘 boot 实测 341 次 —— 这就是"代际混叠"的机会数。
++     * epoch_stale：某个 block 因为 ram_epoch 与 ram->epoch 不符被判失效的次数。
++     *   **这正是旧代码会误判为"有效"并跳进去执行的次数。**
++     *   0 = P0-a 路径从未被走到；>0 = 走到过 N 次，只是没崩。
++     * epoch_high_water：见过的最老 epoch 与新 epoch 的最大差，
++     *   说明槽位被复用了多少轮。 */
++    uint64_t ram_reuse, epoch_stale, epoch_high_water;
 +    uint64_t flush_smc, flush_ic, flush_full;  /* why translations were dropped */
 +    uint64_t chained, ijc_fills, ijc_resets;
 +    uint64_t xchained;
@@ -3455,8 +3527,36 @@ index 0000000000..d4ae11d4af
 +
 +/* Lock-free: blocks are only added (release store) until a flush, which stops every CPU. */
 +static inline HvBlock *hv_block_find(HvMachine *m, uint32_t h, uint64_t va, uint64_t pa, uint32_t flags, uint32_t gen) {
-+    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE))
-+        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) return b;
++    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE)) {
++        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) {
++            /*
++             * ★ P0-a 的真正判据，就在这里。
++             *
++             * 这是**主查找路径**（dispatch.c 的 lookup 两次都走它），
++             * 而 b->gen == gen 只看页级代际。一个 RAM 槽位被 del_ram
++             * 回收、又被 add_ram 复用时，page_gen 是**全新的全 0 数组**，
++             * 而旧 block 若是该 region 第一批翻译出来的，b->gen 也是 0
++             * —— 两者相等，这个 if 就会返回一个按**已消失的 host 内存**
++             * 翻译出来的 block。
++             *
++             * ram_epoch 是 region 级单调计数器，calloc 清不掉它，
++             * 所以它能把"同一个槽位的两个不同占位者"区分开。
++             *
++             * 计数 + 返回 NULL：等价于把这条混叠路径封死，同时留痕。
++             */
++            if (b->ram_epoch != b->ram->epoch) {
++                m->stats.epoch_stale++;
++                {
++                    uint32_t d = b->ram->epoch - b->ram_epoch;
++                    if (d > m->stats.epoch_high_water) m->stats.epoch_high_water = d;
++                }
++                /* 只计数，不打印：这个头文件里没有 stdio。
++                   打印由 dispatch.c 的调用点在计数变化时做。 */
++                return NULL;   /* 不返回这个 block：它属于上一个占位者 */
++            }
++            return b;
++        }
++    }
 +    return NULL;
 +}
 +
@@ -9309,10 +9409,10 @@ index 0000000000..091a7bfc98
 +void hv_jit_reset(HvJitRegion *region) { region->used = 0; }
 diff --git a/accel/henge/engine/local-edits.patch b/accel/henge/engine/local-edits.patch
 new file mode 100644
-index 0000000000..66d76f20df
+index 0000000000..c5d8d2a9f0
 --- /dev/null
 +++ b/accel/henge/engine/local-edits.patch
-@@ -0,0 +1,634 @@
+@@ -0,0 +1,796 @@
 +--- a/core/cpu.h
 ++++ b/core/cpu.h
 +@@ -274,6 +274,11 @@
@@ -9947,6 +10047,168 @@ index 0000000000..66d76f20df
 +     struct HvRam *ram;   /* where its page lives, for a quick staleness check */
 +     uint64_t pg;
 +     uint32_t *code;
++
++/* ---- P0-a 探针：ram_reuse / epoch_stale 计数器 ---- */
++--- a/core/dispatch.c	2026-11-17 17:27:56.178343657 +0800
+++++ b/core/dispatch.c	2026-11-17 17:27:56.180915602 +0800
++@@ -143,11 +143,38 @@
++     HvBlock *c = jc[j].va == va ? jc[j].b : NULL;
++     if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
++         c->ram->page_gen[c->pg] == c->gen) return c;
+++    if (c && c->pa == pa && c->flags == flags && c->ram_epoch != c->ram->epoch) {
+++        /*
+++         * P0-a 的正面证据：如果不看 ram_epoch，上面那个 if 就会命中一个
+++         * 按**已消失的 host 内存**翻译出来的 block，然后跳进去执行。
+++         *
+++         * 即时打印而不是攒到退出：QEMU 在 henge 下没有 accel cleanup 钩子，
+++         * hv_machine_free() 从不被调用 —— 攒着就永远看不到。
+++         * 前 20 次全打，之后每 100 次打一次（避免刷爆）。
+++         */
+++        m->stats.epoch_stale++;
+++        if (c->ram->epoch - c->ram_epoch > m->stats.epoch_high_water)
+++            m->stats.epoch_high_water = c->ram->epoch - c->ram_epoch;
+++        if (getenv("HV_P0A_STATS") &&
+++            (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0)) {
+++            fprintf(stderr, "henge-p0a: STALE-hit #%llu va=%llx pa=%llx "
+++                    "block_epoch=%u ram_epoch=%u (delta %u)\n",
+++                    (unsigned long long)m->stats.epoch_stale,
+++                    (unsigned long long)va, (unsigned long long)pa,
+++                    c->ram_epoch, c->ram->epoch, c->ram->epoch - c->ram_epoch);
+++        }
+++    }
++     uint32_t h = hash_of(va, pa, flags);
++     HvRam *ram = hv_ram_lookup(m, pa);
++     uint64_t pg = (pa - ram->pa) >> HV_TLB_PAGE_BITS;
++     uint32_t gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
+++    uint64_t stale0 = m->stats.epoch_stale;   /* P0-a: hv_block_find 里的混叠计数 */
++     HvBlock *b = find(m, h, va, pa, flags, gen);
+++    if (m->stats.epoch_stale != stale0 && m->stats.epoch_stale <= 20)
+++        fprintf(stderr, "henge-p0a: STALE-find #%llu va=%llx pa=%llx "
+++                "(这条路径旧代码会返回一个按已消失 host 内存翻译的 block)\n",
+++                (unsigned long long)m->stats.epoch_stale,
+++                (unsigned long long)va, (unsigned long long)pa);
++     if (b) {
++         jc[j].va = va, jc[j].b = b;
++         return b;
++@@ -759,6 +786,23 @@
++         fprintf(stderr, "  user light fills: shared region %.0fK/s, elsewhere %.0fK/s\n", RATE(light_region[0]) / 1e3, RATE(light_region[1]) / 1e3);
++         fprintf(stderr, "  code-page protects/s: none %.0f, one entry %.0f, whole-TLB scans %.0f\n", RATE(protect_kind[0]),
++                 RATE(protect_kind[1]), RATE(protect_kind[2]));
+++        /*
+++         * P0-a 的直接判据。这三个数是累积值，不是速率 —— 判"是否发生过"，
+++         * 不是判"多频繁"。
+++         *
+++         *   ram_reuse    > 0  槽位复用发生过（带盘 boot 必然几百次）
+++         *   epoch_stale  = 0  **旧代码不会误判任何一个 block** ——
+++         *                     说明 P0-a 的混叠路径在这轮里从未被走到
+++         *   epoch_stale  > 0  走到过 N 次；旧代码会跳进 N 个按已消失的
+++         *                     host 内存翻译出来的 block。崩不崩取决于
+++         *                     QEMU 是否恰好复用了同一 host 映射。
+++         *
+++         * 这条比 SIGSEGV 可靠：SIGSEGV 是彩票，这是命中计数。
+++         */
+++        fprintf(stderr, "  P0-a: ram_reuse %llu, epoch_stale %llu, epoch_high_water %llu\n",
+++                (unsigned long long)m->stats.ram_reuse,
+++                (unsigned long long)m->stats.epoch_stale,
+++                (unsigned long long)m->stats.epoch_high_water);
++         fprintf(stderr, "  fast resume refused/s: state %.0f, exit request %.0f, interrupt %.0f, timer %.0f, not cached %.0f\n", RATE(fr_fail[0]),
++                 RATE(fr_fail[1]), RATE(fr_fail[2]), RATE(fr_fail[3]), RATE(fr_fail[4]));
++         fprintf(stderr, "  WFE waits in place %.0f/s; exits chained as placed %.0f/s; SVC/ERET resumed in place %.0f/s\n", RATE(wfe_waits),
++@@ -830,6 +874,21 @@
++         if (b->ram_epoch != b->ram->epoch ||
++             __atomic_load_n(&b->ram->page_gen[b->pg], __ATOMIC_ACQUIRE) != b->gen ||
++             m->slot_xpa[idx]) {
+++            /* 这里更严重：旧代码会把这个 slot 链到一个用旧 host 内存
+++               翻译出来的 block 上，然后真的跳过去。计一次。 */
+++            if (b->ram_epoch != b->ram->epoch) {
+++                m->stats.epoch_stale++;
+++                if (b->ram->epoch - b->ram_epoch > m->stats.epoch_high_water)
+++                    m->stats.epoch_high_water = b->ram->epoch - b->ram_epoch;
+++                if (getenv("HV_P0A_STATS") &&
+++                    (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0)) {
+++                    fprintf(stderr, "henge-p0a: STALE-chain #%llu va=%llx "
+++                            "block_epoch=%u ram_epoch=%u\n",
+++                            (unsigned long long)m->stats.epoch_stale,
+++                            (unsigned long long)b->va,
+++                            b->ram_epoch, b->ram->epoch);
+++                }
+++            }
++             pthread_mutex_unlock(&m->tr_mu);
++             return;
++         }
++diff -ruN a/core/machine.c b/core/machine.c
++--- a/core/machine.c	2026-11-17 17:27:56.178466020 +0800
+++++ b/core/machine.c	2026-11-17 17:27:56.181019941 +0800
++@@ -304,6 +304,9 @@
++     for (i = 0; i < m->nram; i++) {
++         if (!m->ram[i].host && !m->ram[i].size) {
++             r = &m->ram[i];
+++            /* P0-a 判据：这是"旧 block 可能与新 page_gen 混叠"的一次机会。
+++               romd toggle 每轮带盘 boot 341 次，全部走这里。 */
+++            m->stats.ram_reuse++;
++             break;
++         }
++     }
++diff -ruN a/core/machine.h b/core/machine.h
++--- a/core/machine.h	2026-11-17 17:27:56.178546773 +0800
+++++ b/core/machine.h	2026-11-17 17:27:56.181519640 +0800
++@@ -70,6 +70,16 @@
++ /* Counters for --stats: where the time goes. */
++ typedef struct HvStats {
++     uint64_t blocks, translations, block_flushes;
+++    /* P0-a 的三个直接判据（比 SIGSEGV 彩票可靠得多）。
+++     *
+++     * ram_reuse：add_ram 复用一个退役槽位的次数。每次 romd toggle 至少一次，
+++     *   单轮带盘 boot 实测 341 次 —— 这就是"代际混叠"的机会数。
+++     * epoch_stale：某个 block 因为 ram_epoch 与 ram->epoch 不符被判失效的次数。
+++     *   **这正是旧代码会误判为"有效"并跳进去执行的次数。**
+++     *   0 = P0-a 路径从未被走到；>0 = 走到过 N 次，只是没崩。
+++     * epoch_high_water：见过的最老 epoch 与新 epoch 的最大差，
+++     *   说明槽位被复用了多少轮。 */
+++    uint64_t ram_reuse, epoch_stale, epoch_high_water;
++     uint64_t flush_smc, flush_ic, flush_full;  /* why translations were dropped */
++     uint64_t chained, ijc_fills, ijc_resets;
++     uint64_t xchained;
++@@ -346,8 +356,36 @@
++ 
++ /* Lock-free: blocks are only added (release store) until a flush, which stops every CPU. */
++ static inline HvBlock *hv_block_find(HvMachine *m, uint32_t h, uint64_t va, uint64_t pa, uint32_t flags, uint32_t gen) {
++-    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE))
++-        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) return b;
+++    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE)) {
+++        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) {
+++            /*
+++             * ★ P0-a 的真正判据，就在这里。
+++             *
+++             * 这是**主查找路径**（dispatch.c 的 lookup 两次都走它），
+++             * 而 b->gen == gen 只看页级代际。一个 RAM 槽位被 del_ram
+++             * 回收、又被 add_ram 复用时，page_gen 是**全新的全 0 数组**，
+++             * 而旧 block 若是该 region 第一批翻译出来的，b->gen 也是 0
+++             * —— 两者相等，这个 if 就会返回一个按**已消失的 host 内存**
+++             * 翻译出来的 block。
+++             *
+++             * ram_epoch 是 region 级单调计数器，calloc 清不掉它，
+++             * 所以它能把"同一个槽位的两个不同占位者"区分开。
+++             *
+++             * 计数 + 返回 NULL：等价于把这条混叠路径封死，同时留痕。
+++             */
+++            if (b->ram_epoch != b->ram->epoch) {
+++                m->stats.epoch_stale++;
+++                {
+++                    uint32_t d = b->ram->epoch - b->ram_epoch;
+++                    if (d > m->stats.epoch_high_water) m->stats.epoch_high_water = d;
+++                }
+++                /* 只计数，不打印：这个头文件里没有 stdio。
+++                   打印由 dispatch.c 的调用点在计数变化时做。 */
+++                return NULL;   /* 不返回这个 block：它属于上一个占位者 */
+++            }
+++            return b;
+++        }
+++    }
++     return NULL;
++ }
++ 
++diff -ruN a/host/audio_mac.c b/host/audio_mac.c
 diff --git a/accel/henge/engine/sync-from-upstream.sh b/accel/henge/engine/sync-from-upstream.sh
 new file mode 100755
 index 0000000000..26ce0594eb
