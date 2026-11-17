@@ -1,0 +1,19 @@
+#cloud-config
+#
+# 清理 seed：移除 seed v2 装进系统盘的 netprobe 三件套。
+#
+# 用 bootcmd 而不是 runcmd —— 这是关键。
+# netprobe.timer 是 OnBootSec=60，60 秒一到就打点并 reboot；
+# 而 cloud-init 的 runcmd 走 final 阶段，要等 network + config 全部完成，
+# 实测在 90 秒之后。用 runcmd 时 cleanup 永远来不及执行：
+# 第一次尝试就撞上了这个 —— 日志显示 round 一路涨到 7，
+# 每一轮都是 netprobe 先 reboot，cloud-init 的 runcmd 从未跑到。
+#
+# bootcmd 走 cloud-init-local，在 ~15 秒，早于 60 秒的 timer。
+datasource_list: [NoCloud, None]
+
+bootcmd:
+  - [ sh, -c, "systemctl disable --now netprobe.timer >/dev/console 2>&1; rm -f /etc/systemd/system/netprobe.timer /etc/systemd/system/netprobe.service /usr/local/bin/netprobe /var/lib/netprobe.round; systemctl daemon-reload; echo CLEANUP-RAN > /dev/console; echo CLEANUP-PROBE-EXISTS=$( [ -f /usr/local/bin/netprobe ] && echo yes || echo no ) > /dev/console; echo CLEANUP-TIMER=$( systemctl is-enabled netprobe.timer 2>&1 ) > /dev/console" ]
+
+runcmd:
+  - [ sh, -c, "echo CLEANUP-FINAL > /dev/console; sync; systemctl poweroff" ]

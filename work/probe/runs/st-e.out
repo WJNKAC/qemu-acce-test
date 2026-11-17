@@ -1,0 +1,63 @@
+=== seedtest tag=e smp=2 max_rounds=3 timeout=330s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=115s) ---
+  NETPROBE-BEGIN round=1 uptime=99.63
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 2 (t=195s) ---
+  NETPROBE-BEGIN round=2 uptime=60.48
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+--- round 3 (t=280s) ---
+  NETPROBE-BEGIN round=3 uptime=60.66
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+
+=== 汇总 ===
+轮次: BEGIN=3  END=3   ci-info=3   multi-user=3   seed_installed=1
+地址行: 6   curl200=3/3   TCP: 连上=0 拒绝=3(RST=网络通) 超时=0
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=0  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+★ per-instance 坑已绕过：第 3 轮仍在跑（cloud-init 模块早已失效）

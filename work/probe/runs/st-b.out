@@ -1,0 +1,15 @@
+=== seedtest tag=b smp=2 max_rounds=3 timeout=420s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=75s) ---
+--- round 2 (t=160s) ---
+--- round 3 (t=245s) ---
+
+=== 汇总 ===
+轮次: BEGIN=3  END=3   ci-info=3   seed_installed=0
+地址行: 6      端到端: GW53=0
+0 GW22=0
+0 DNS53=0
+0  curl200=3/3
+dsusp_ms=0  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+★ per-instance 坑已绕过：第 3 轮仍在跑（cloud-init 模块早已失效）

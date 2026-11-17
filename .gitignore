@@ -56,3 +56,7 @@ work/*.sidecar.*
 work/_*.sh
 work/fix-*.sh
 work/build-qemu-in-container.sh
+
+# 大型二进制与设备侧构建产物（110MB 的 qemu 不该进仓库）
+work/qemu-hv/
+*.iso

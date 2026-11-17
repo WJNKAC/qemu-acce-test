@@ -1,0 +1,42 @@
+=== seedtest tag=d smp=2 max_rounds=2 timeout=300s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=115s) ---
+  NETPROBE-BEGIN round=1 uptime=98.72
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW53 ok=PROBE-ERR:ConnectionRefusedError
+  NETPROBE-TCP-GW22 ok=PROBE-ERR:ConnectionRefusedError
+  NETPROBE-TCP-DNS53 ok=PROBE-ERR:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+--- round 2 (t=195s) ---
+  NETPROBE-BEGIN round=2 uptime=60.45
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW53 ok=PROBE-ERR:ConnectionRefusedError
+
+=== 汇总 ===
+轮次: BEGIN=2  END=2   ci-info=2   multi-user=2   seed_installed=1
+地址行: 4      端到端: GW53=0 GW22=0 DNS53=0  curl200=2/2
+探针自身错误: 6   ⚠ 探针坏了，上面的 ok=0 不可信
+dsusp_ms=-1  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+★ per-instance 坑已绕过：第 2 轮仍在跑（cloud-init 模块早已失效）

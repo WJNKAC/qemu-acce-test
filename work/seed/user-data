@@ -1,0 +1,149 @@
+#cloud-config
+#
+# seed v2：让 guest 自己周期 reboot，host 侧只读 serial。
+#
+# 为什么不能用 power_state: {mode: reboot}：
+# cloud-init 的模块（write_files / runcmd / power_state）是 **per-instance** 语义。
+# 第一轮 boot 之后 instance-id 持久在磁盘上，第二轮这些模块整体不执行，
+# power_state 不再触发 → 循环在第 2 轮断链。
+#
+# 所以循环载体必须是**持久化的 systemd 单元**：write_files 只在第一轮把
+# 三件套写进 /usr/local/bin 和 /etc/systemd/system，runcmd 只在第一轮
+# enable 一次；此后完全由 systemd 自持，与 cloud-init 无关。
+#
+# ci-info 每轮都能打，是因为它来自 init 阶段的 datasource 探测（另一个通道），
+# 这也正是 4/4 数据能成立的原因。
+
+# 禁掉 metadata 探测：169.254.169.254 在 slirp 下永远不可达，
+# cloud-init 会白等 120 秒。这一行让那个常数消失。
+datasource_list: [NoCloud, None]
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  users:
+    - {name: root, password: henge, type: text}
+
+write_files:
+  # ---- 探针本体：打网络状态 + 端到端结果，然后 reboot ----
+  - path: /usr/local/bin/netprobe
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # 每轮 boot 后由 netprobe.timer 触发一次。
+      # 全部输出走 /dev/console（= ttyAMA0），host 侧只读 serial 即可判读。
+      #
+      # 判据为什么不用 ping：13.9 已经记过 —— slirp 的 ICMP 要宿主的 raw/ping
+      # socket，非特权 Android 上拿不到，所以 guest 里 ping 网关 0% 和 100% 丢包
+      # 都是常事。13.9 的结论是"验收判据改用 HTTP 状态码，不用 ping"。
+      # 这里全部走 TCP，用 python3 的 socket（镜像必有 python3，cloud-init 依赖它），
+      # 不依赖 nc / ping 是否存在。
+      C=/dev/console
+      R=$(cat /var/lib/netprobe.round 2>/dev/null || echo 0)
+      R=$((R + 1))
+      echo $R > /var/lib/netprobe.round
+
+      say() { echo "$@" >> $C; }
+
+      say "NETPROBE-BEGIN round=$R uptime=$(cut -d' ' -f1 /proc/uptime)"
+      say "NETPROBE-KERNEL $(uname -r)"
+
+      # ---- 一层：地址 ----
+      ip -4 -o addr show 2>/dev/null | awk '{print "NETPROBE-ADDR "$2" "$4}' >> $C
+
+      # ---- 二层：路由与网关 ----
+      ip -4 route 2>/dev/null | sed 's/^/NETPROBE-ROUTE /' >> $C
+      GW=$(ip -4 route 2>/dev/null | awk '/^default/{print $3; exit}')
+      say "NETPROBE-GW gw=${GW:-none}"
+
+      # ---- 三层：端到端，纯 TCP ----
+      # tcp_ok <ip> <port>  -> 打印 ok=1/0
+      # python3 -c，不用 heredoc：YAML 的 content: | 会把 EOF 标记一起缩进，
+      # 而 <<'EOF' 要求标记顶格 —— 缩进后 heredoc 永不结束，整个函数体被当成
+      # 输入吞掉（dash -n 只当 warning 放过，运行时才炸）。这就是首测里
+      # TCP-GW53 ok=0 而 curl code=200 的原因：curl 没走 heredoc。
+      # stderr 不吞：探针自己坏了要能和"网络不通"区分开。
+      # 三态，不是二态。这是这一轮最重要的修正：
+      #   ok     连上了                → 服务在，路径通
+      #   refused 收到 RST             → **网络通**，只是那个端口没服务
+      #   timeout 无应答               → 网络不通（这才是"地址拿到但不通"）
+      # 第一版把 refused 当成 ok=0，等于把"通"判成"不通"，
+      # 与 curl code=200 直接矛盾 —— 判据语义错，不是探针错。
+      tcp_state() {
+          python3 -c 'import socket,sys
+      try:
+          s=socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=3)
+          s.close(); print("ok")
+      except ConnectionRefusedError:
+          print("refused")
+      except socket.timeout:
+          print("timeout")
+      except Exception as e:
+          print("err:"+type(e).__name__)' "$1" "$2" 2>&1
+      }
+
+      if [ -n "$GW" ]; then
+          say "NETPROBE-TCP-GW22 state=$(tcp_state "$GW" 22)"
+      else
+          say "NETPROBE-TCP-GW22 state=no-gw"
+      fi
+      # 10.0.2.3 是 slirp 的 DNS；这条测"出到 slirp 再回来"的完整 TCP 路径
+      say "NETPROBE-TCP-DNS53 state=$(tcp_state 10.0.2.3 53)"
+
+      # full path：经 slirp 到 host loopback 上的监听端口（host 侧起 nc -l 10080）。
+      # host 没起监听时是 000，不算故障 —— 与"地址拿到但不通"要分开。
+      say "NETPROBE-CURL code=$(timeout 8 curl -s -o /dev/null -w '%{http_code}' http://10.0.2.2:10080/ 2>/dev/null || echo 000)"
+
+      # 链路层错误计数
+      ip -s -s link show 2>/dev/null | grep -E "RX:|TX:|errors|dropped" | head -8 \
+          | sed 's/^/NETPROBE-LINK /' >> $C
+
+      say "NETPROBE-END round=$R"
+      sync
+      # PSCI SYSTEM_RESET —— 这正是"guest 内 reboot"形态，
+      # 也是 cloud-init 的 power_state 永远做不到的那个形态（per-instance）。
+      sleep 2
+      systemctl reboot
+
+  - path: /etc/systemd/system/netprobe.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=henge network probe (round marker + e2e + reboot)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/netprobe
+      # oneshot that ends in systemctl reboot: let it finish, and do not
+      # treat the shutdown as a failure of this unit.
+      RemainAfterExit=no
+      SuccessExitStatus=0 1
+      TimeoutStartSec=180
+
+  - path: /etc/systemd/system/netprobe.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=run netprobe 60s after boot
+
+      [Timer]
+      OnBootSec=60
+      AccuracySec=1s
+      Unit=netprobe.service
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /var/lib/netprobe.round
+    permissions: '0644'
+    content: |
+      0
+
+runcmd:
+  # 只在第一轮执行（per-instance）。此后由 timer 自持。
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, netprobe.timer ]
+  # 顺手把 ci-info 那类信息也照原样保留一份（判据兼容）
+  - [ sh, -c, "echo HENGE-SEED-V2-INSTALLED > /dev/console" ]
