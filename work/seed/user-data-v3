@@ -1,0 +1,141 @@
+#cloud-config
+# seed v3：guest 自持 reboot 循环 + 后端无关的网络判据
+#
+# 与 v2 的差别只在 netprobe 的内容：DNS 改成动态取、curl 拆成 GW/EXT 两条、
+# 新增 TCP-EXT 与 DNS-RESOLVE。循环机制完全不变（systemd timer 自持）。
+#
+# 关键是**不能用 power_state / runcmd 做循环**：cloud-init 的模块是
+# per-instance 语义，第一轮之后整体跳过；而且同一个 instance-id 第二次出现
+# 也会跳过（/var/lib/cloud/instances 有记录）。所以 instance-id 必须每次唯一，
+# 循环载体必须是持久化的 systemd 单元。
+datasource_list: [NoCloud, None]
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  users:
+    - {name: root, password: henge, type: text}
+
+write_files:
+  - path: /usr/local/bin/netprobe
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # netprobe: 每轮 boot 后由 netprobe.timer 触发，打一组判据然后 reboot。
+      #
+      # 设计原则：**探针只报事实，不假设后端**。slirp 还是 passt，由 host 侧脚本
+      # 按 NET=... 解释；guest 不知道也不该知道。
+      C=/dev/console
+      R=$(cat /var/lib/netprobe.round 2>/dev/null || echo 0)
+      R=$((R + 1))
+      echo $R > /var/lib/netprobe.round
+      say() { echo "$@" >> $C; }
+
+      say "NETPROBE-BEGIN round=$R uptime=$(cut -d' ' -f1 /proc/uptime)"
+      say "NETPROBE-KERNEL $(uname -r)"
+
+      # ---- 一层：地址与路由 ----
+      ip -4 -o addr show 2>/dev/null | awk '{print "NETPROBE-ADDR "$2" "$4}' >> $C
+      ip -4 route 2>/dev/null | sed 's/^/NETPROBE-ROUTE /' >> $C
+      GW=$(ip -4 route 2>/dev/null | awk '/^default/{print $3; exit}')
+      say "NETPROBE-GW gw=${GW:-none}"
+
+      # ---- DNS 服务器：从路由表取，排除网关 ----
+      # 不能硬编码。写死 10.0.2.3（slirp 内建）在 passt 下是不存在的地址，
+      # 实测会把"网络正常"读成"DNS 超时"。
+      DNS=""
+      for ip in $(ip -4 route 2>/dev/null | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}'); do
+          [ "$ip" = "$GW" ] && continue
+          DNS=$ip; break
+      done
+      say "NETPROBE-DNS server=${DNS:-none}"
+
+      # ---- 三态 TCP：ok=连上 / refused=收到RST(路径通) / timeout=不通 ----
+      tcp_state() {
+          python3 -c 'import socket,sys
+      try:
+          s=socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=4); s.close(); print("ok")
+      except ConnectionRefusedError: print("refused")
+      except socket.timeout: print("timeout")
+      except Exception as e: print("err:"+type(e).__name__)' "$1" "$2" 2>&1
+      }
+
+      # 网关：refused 就是"路径通"（RST 需要完整 TCP/IP 栈）
+      if [ -n "$GW" ]; then
+          say "NETPROBE-TCP-GW22 state=$(tcp_state "$GW" 22)"
+      else
+          say "NETPROBE-TCP-GW22 state=no-gw"
+      fi
+
+      # 外网 TCP：223.5.5.5 是 AliDNS，80/443 都开，且**不需要 DNS 解析**。
+      # 这是"能不能出到公网"的最干净证据 —— 不依赖 guest 的 DNS 是否工作。
+      say "NETPROBE-TCP-EXT state=$(tcp_state 223.5.5.5 80)"
+
+      # ---- DNS 解析：域名→IP 到底能不能成 ----
+      # 单独测，因为 slirp 下这个已知有问题（FINDINGS: systemd-resolved 不吃
+      # slirp 下发的 DNS）。把它和"网络通不通"分开，才不会互相污染。
+      RES=$(python3 -c 'import socket,sys
+      try: print(socket.gethostbyname(sys.argv[1]))
+      except Exception as e: print("fail:"+type(e).__name__)' mirrors.tuna.tsinghua.edu.cn 2>&1)
+      say "NETPROBE-DNS-RESOLVE result=$RES"
+
+      # ---- HTTP：两个目标，语义不同 ----
+      #  GW:10080   slirp 下 GW 即宿主，能到 host 自建监听；passt 下 GW 是真实
+      #             路由器，没有 10080，预期失败。由 host 侧按后端解释。
+      #  223.5.5.5  公网 IP，不依赖 DNS，两个后端都该通。
+      if [ -n "$GW" ]; then
+          CODE=$(timeout 8 curl -s -o /dev/null -w '%{http_code}' "http://$GW:10080/" 2>/dev/null)
+          say "NETPROBE-CURL-GW code=${CODE:-000}"
+      else
+          say "NETPROBE-CURL-GW code=000"
+      fi
+      CODE=$(timeout 20 curl -s -o /dev/null -w '%{http_code}' http://223.5.5.5/ 2>/dev/null)
+      say "NETPROBE-CURL-EXT code=${CODE:-000}"
+
+      # ---- 链路层错误计数 ----
+      ip -s -s link show 2>/dev/null | grep -E 'RX:|TX:|errors|dropped' | head -8 \
+          | sed 's/^/NETPROBE-LINK /' >> $C
+
+      say "NETPROBE-END round=$R"
+      sync
+      sleep 2
+      systemctl reboot
+
+  - path: /etc/systemd/system/netprobe.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=henge network probe (round marker + e2e + reboot)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/netprobe
+      RemainAfterExit=no
+      SuccessExitStatus=0 1
+      TimeoutStartSec=180
+
+  - path: /etc/systemd/system/netprobe.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=run netprobe 60s after boot
+
+      [Timer]
+      OnBootSec=60
+      AccuracySec=1s
+      Unit=netprobe.service
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /var/lib/netprobe.round
+    permissions: '0644'
+    content: |
+      0
+
+runcmd:
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, netprobe.timer ]
+  - [ sh, -c, "echo HENGE-SEED-V2-INSTALLED > /dev/console" ]

@@ -1,0 +1,28 @@
+=== seedtest tag=v3 smp=2 max_rounds=2 timeout=300s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=105s) ---
+  NETPROBE-BEGIN round=1 uptime=93.30
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-DNS server=10.0.2.3
+--- round 2 (t=190s) ---
+  NETPROBE-BEGIN round=2 uptime=60.26
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-DNS server=10.0.2.3
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+
+seedtest.sh[249]: MILE: parameter not set

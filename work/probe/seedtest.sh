@@ -69,6 +69,18 @@ done
 
 case "$NET" in
   slirp)
+    # host 侧监听：CURL-GW 打的是 10.0.2.2:10080，需要有人在听。
+    # 之前靠外面手动起 listen.sh，它挂掉后没人发现 —— 结果 20 轮 curl 全 000，
+    # 差点读成"外网全不通"。现在由脚本自己管生命周期。
+    if ! (cat /proc/net/tcp 2>/dev/null | awk '{print $2}' | grep -q ':2768'); then
+        LPFILE=$H/st-$TAG.listen.pid
+        ( echo $$ > "$LPFILE"; while true; do
+            printf 'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK' \
+              | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
+          done ) >/dev/null 2>&1 &
+        LPID=$!
+        sleep 1
+    fi
     # shellcheck disable=SC2086
     $BIN $QEMU_ARGS -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
         >/dev/null 2>"$ERR" &
@@ -90,7 +102,19 @@ case "$NET" in
   *)
     echo "bad NET=$NET (slirp|passt)"; exit 2 ;;
 esac
-cleanup() { kill -9 $QP 2>/dev/null; }
+cleanup() {
+    kill -9 $QP 2>/dev/null
+    # slirp 模式下我们自己起的 host 监听，退出时一并收掉
+    # 只按 pidfile 杀，绝不按名字匹配。实测：pgrep -f "nc -l -p 10080" 在
+    # 设备上返回 3 个进程 —— 因为外层 sh -c 的命令行里也含这个串，
+    # 连 [n]c 字符类都挡不住（整条 sh -c 的命令行是字面量）。
+    # 这是第三次同类陷阱（前两次：清理循环自杀、"*abtest*" 匹配到自身）。
+    if [ -n "${LPID:-}" ]; then kill -9 "$LPID" 2>/dev/null; fi
+    if [ -f "${LPFILE:-/nonexistent}" ]; then
+        kill -9 "$(cat "$LPFILE" 2>/dev/null)" 2>/dev/null
+        rm -f "$LPFILE"
+    fi
+}
 trap cleanup EXIT HUP INT TERM
 
 mon() { printf '%s\n' "$1" | timeout 3 nc 127.0.0.1 $MPORT 2>/dev/null; }
@@ -198,32 +222,48 @@ DS=$(( (B1 - B0) - (M1 - M0) ))
 
 BEG=$(cnt 'NETPROBE-BEGIN'); END=$(cnt 'NETPROBE-END')
 ADDR=$(cnt 'NETPROBE-ADDR')
-# grep -c 零命中时同时打印 0 并返回 1，`|| echo 0` 会变成两行 —— 用 cnt()。
-# 三态：ok=连上 / refused=收到 RST（网络通，端口无服务） / timeout=不通
-REF=$(cnt 'state=refused')
-TOUT=$(cnt 'state=timeout')
-OKC=$(cnt 'state=ok')
-C200=$(cnt 'NETPROBE-CURL code=200')
-PERR=$(cnt 'PROBE-ERR')
-CURLN=$(cnt 'NETPROBE-CURL')
+# 先把日志剥一遍 ANSI 生成最新副本。必须放在所有 cnt() 之前：
+# 否则 CEXTCODES 那类直接读 $NOANSI 的地方会拿到上一轮的旧副本
+# （实测：passt 那次 分布显示"无"，但非000=2 —— 就是读到了过期文件）。
 strip_ansi
+
+# grep -c 零命中时同时打印 0 并返回 1，`|| echo 0` 会变成两行 —— 用 cnt()。
+# 每个判据分开数，不合并。合并会丢掉"是哪一条失败"这个信息。
+GW22REF=$(cnt 'TCP-GW22 state=refused')
+EXT_OK=$(cnt 'TCP-EXT state=ok')
+EXT_BAD=$(cnt 'TCP-EXT state=timeout')
+GW22BAD=$(cnt 'TCP-GW22 state=timeout')
+TIMEOUT_ALL=$(cnt 'state=timeout')
+DNSFAIL=$(cnt 'DNS-RESOLVE result=fail')
+DNSDONE=$(cnt 'NETPROBE-DNS-RESOLVE')
+DNSOK=$((DNSDONE - DNSFAIL))
+CGW200=$(cnt 'CURL-GW code=200')
+CGWN=$(cnt 'NETPROBE-CURL-GW')
+# curl-EXT 的目标是 223.5.5.5（AliDNS），它对 "/" 正常返回 404 ——
+# 只数 200 会让 404 完全隐形（实测：2 轮都拿到 404，汇总却显示 200=0 000=0）。
+# 只要不是 000，就说明"TCP+HTTP 都通了"，具体码只作参考。
+CEXTN=$(cnt 'NETPROBE-CURL-EXT')
+CEXT000=$(cnt 'CURL-EXT code=000')
+CEXTCODES=$(grep -a 'NETPROBE-CURL-EXT code=' "$NOANSI" 2>/dev/null | sed -E 's/.*code=//' | tr -d '\r' | sort | uniq -c | tr '\n' ' ')
+CEXTOK=$((CEXTN - CEXT000))
+# 探针自身异常：只看 tcp_state 的 "err:<Type>"。
+# 不能把 DNS 的 "fail:gaierror" 算进来 —— 那是**真实的 DNS 失败**（结果），
+# 不是探针坏了。混在一起会让"DNS 不工作"被读成"探针有 bug"。
+# （更早的版本数的是 'PROBE-ERR'，而探针从不打这个串 —— 等于永远 0，空仪器。）
+PERR=$(cnt 'state=err:')
 CI=$(cnt 'ci-info: | Device')
 MU=$(grep -ac 'Reached target.*multi-user' "$NOANSI" 2>/dev/null); MU=${MU:-0}
 SEEDINST=$(cnt 'HENGE-SEED-V2-INSTALLED')
 
 say
-say "=== 汇总 ==="
-say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU   seed_installed=$SEEDINST"
-# curl 的 000 必须拆开：目标是 10.0.2.2:10080（host 侧 nc -l）。
-# 那个监听不在时 curl 拿 000，但这不是网络问题 —— STATES.md 明确要求
-# "单独标注，不并入网络健康度"。第一版把它并进 curl200=0/19，
-# 看着像"20 轮全部外网不通"，实际是 host 侧监听挂了。
-C000=$(cnt 'code=000')
-HOSTLISTEN=up
-[ "$C000" -gt 0 ] && HOSTLISTEN="DOWN（10080 无监听 => 000 不算网络故障）"
-say "地址行: $ADDR   TCP: 连上=$OKC 拒绝=$REF(RST=网络通) 超时=$TOUT"
-say "curl: 200=$C200 000=$C000 / 共$CURLN   host-10080=$HOSTLISTEN"
-say "判读: 超时=$TOUT 才是网络可疑信号；000 若因 host 监听缺失则与本项无关"
+say "=== 汇总 (net=$NET) ==="
+say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU   seed=$SEEDINST"
+say "TCP 网关: refused=$GW22REF(路径通)  timeout=$GW22BAD"
+say "TCP 外网: ok=$EXT_OK  timeout=$EXT_BAD   (223.5.5.5:80，不依赖 DNS)"
+say "DNS 解析: ok=$DNSOK  fail=$DNSFAIL / 共$DNSDONE"
+say "curl-GW(host监听): 200=$CGW200/$CGWN"
+say "curl-EXT(公网IP): 非000=$CEXTOK 000=$CEXT000 / 共$CEXTN   分布: ${CEXTCODES:-无}（404 属正常：AliDNS 无 / 页面）"
+say "任意 timeout 总数: $TIMEOUT_ALL   ← 唯一可疑信号"
 say "探针异常: $PERR（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）"
 say "dsusp_ms=$DS  verdict=$( [ $DS -lt 1000 ] && echo VALID || echo INVALID )"
 if [ "$BEG" -eq "$END" ] && [ "$BEG" -gt 0 ]; then

@@ -1,0 +1,32 @@
+=== seedtest tag=vp3 smp=2 max_rounds=2 timeout=300s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=140s) ---
+  NETPROBE-BEGIN round=1 uptime=128.81
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+--- round 2 (t=245s) ---
+  NETPROBE-BEGIN round=2 uptime=76.16
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+
+=== 汇总 (net=passt) ===
+轮次: BEGIN=2  END=2   ci-info=2   multi-user=0   seed=1
+TCP 网关: refused=2(路径通)  timeout=0
+TCP 外网: ok=2  timeout=0   (223.5.5.5:80，不依赖 DNS)
+DNS 解析: ok=2  fail=0 / 共2
+curl-GW(host监听): 200=2/2
+curl-EXT(公网IP): 非000=2 000=0 / 共2   分布: 无（404 属正常：AliDNS 无 / 页面）
+任意 timeout 总数: 0   ← 唯一可疑信号
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=0  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+passt: 地址=enp0s1 169.254.2.1/8  网关=192.168.1.1  （应分别为 169.254.x/8 与宿主真实网关）
+boot_id: 起始 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6   结束 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+★ per-instance 坑已绕过：第 2 轮仍在跑（cloud-init 模块早已失效）
