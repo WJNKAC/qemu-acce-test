@@ -4029,3 +4029,242 @@ Android 屏幕关闭 / doze → 设备 suspend
 | 13.20 | 4/12 行档是 P0 症状现场 | ❌ `3h3h` 是 ANSI `ESC[=3h` |
 | 13.24 | vm clock 停走需实现 get_virtual_clock | ❌ fallback 正常，A 有害 |
 | **13.26** | **设备 suspend 冻结 MONOTONIC** | ✅ **实测 + 对照实验** |
+
+
+### 13.27 HOST-POWER 层：M/B 监控列落地，白名单被 adb 通道阻塞
+
+用户把 13.26 的产出单列为一个新的层（HOST-POWER），并提出三件待办。
+本轮做了第一件，第二件被阻塞，第三件已验证不可取。
+
+#### 一、M/B 双时钟监控列（✅ 已落地）
+
+**为什么必须有**：13.26 之前所有实验数据都被 doze 污染过，
+**而没有任何一列记录过"这段时间设备睡了多少"** ——
+所以污染不可见、不可判、只能事后靠推理猜。
+
+`work/probe/sidecar.sh` 新增 6 列 + 1 个判定：
+
+| 列 | 含义 |
+|---|---|
+| `mono_ms` | `CLOCK_MONOTONIC` 毫秒 |
+| `boot_ms` | `CLOCK_BOOTTIME` 毫秒（含 suspend） |
+| `dm_ms` / `db_ms` | 相对上一次采样的增量 |
+| `dsusp_ms` | `db − dm`，本次间隔里设备睡了多少 |
+| `susp_cum_ms` | 累计 suspend 毫秒 |
+| `flag` | `ok` / `SUSPEND`（单间隔 >200ms） / `init` |
+
+`work/probe/sidecar_check.sh` 给出闸门判定：
+
+```
+单间隔 dsusp > 200ms  → 该行记 SUSPEND
+累计 susp_cum > 1000ms → 整个 run INVALID，不许进通过率统计
+```
+
+实测输出（一次 90 秒的 run）：
+
+```
+t         ser  mono_ms     boot_ms     dM     dB     dsusp  cum  flag
+13:44:13   4  112712560  184101276      0      0      0     0  init
+13:44:23  18  112723088  184111805  10528  10529      1     1  ok
+13:44:34  19  112733620  184122337  10532  10532      0     1  ok
+13:44:45  19  112744126  184132842  10506  10505     -1     1  ok
+```
+
+`dM ≈ dB ≈ 10500ms`（10.5 秒间隔），`dsusp ≈ 0–1ms` 纯噪声 → **VALID**。
+
+**一个必须修掉的细节**：`dsusp` 会出现 `-1`。
+`BOOTTIME − MONOTONIC` 数学上单调不减（差值只增不减），
+所以负增量一定是两次 `clock_gettime` 调用的微秒级顺序偏差。
+原实现无条件累加，噪声会把真实 suspend **抵消掉**，
+让被污染的 run 显示成 VALID —— 正是要防的事。
+已改为只累加正值。
+
+#### 二、Doze 白名单（❌ 被 adb 通道阻塞）
+
+```
+$ cmd deviceidle whitelist +com.termux
+java.lang.SecurityException: Neither user 10280 nor current process
+has android.permission.DEVICE_POWER.
+```
+
+Termux 用户没有 `DEVICE_POWER`，必须走 adb。而设备 **PDYT20（mt6853 / Android 12）**
+当前没有 adb 通道：
+
+| 尝试 | 结果 |
+|---|---|
+| `adb connect 192.168.1.7:5555` | `Connection refused`（Android 11+ 默认关无线调试） |
+| 宿主 `adb devices` | 只有 V2156FA（USB，192.168.1.34）与一台旧平板 |
+| 设备上 `dumpsys` | 命令不存在（非 root 受限环境） |
+
+**结论**：白名单这条要靠用户手动开一次无线调试，或用 USB 接一次。
+在此之前，`termux-wake-lock` 是唯一可用的手段——而它实测有效
+（M 恢复按真实时间走，见 13.26）。
+
+**但有个残留风险要点名**：Doze 是比普通 suspend 更深的一层，
+它会**忽略 wakelock**。当前 8 轮实验里如果某几轮正好撞上 Doze 而非普通 suspend，
+`dsusp` 会把它抓出来（累计 >1s 即 INVALID），所以数据是安全的；
+但如果**全部 8 轮都被 Doze 污染**，那结论会是"没有有效样本"，
+那时才必须解决白名单。监控列让这件事变成可观测，而不是靠猜。
+
+#### 三、CLOCK_BOOTTIME 改造（⛔ 维持判死）
+
+用户判定正确，补一条更具体的理由：
+改装后 guest 在 suspend 恢复时会看到 **CNTVCT 一次性跳变**（跨过整个休眠时长），
+于是**所有 timer 在同一瞬间同时到期**——不是"活性变好"，
+而是把活性伪影换成了正确性 bug（guest 的 scheduler 会收到成百上千个
+背靠背的 tick，watchdog 与 lost-tick 检测会误判）。
+真实硬件在 suspend 时 generic timer 也是停的、靠 RTC 补，
+所以"停走"本身不是缺陷，**让设备别睡**才是正解。
+
+#### 四、n≥8 通过率测量（进行中）
+
+`work/probe/nrun.sh` 相对 `abtest.sh` 修了三点：
+
+| abtest.sh 的问题 | nrun.sh 的做法 |
+|---|---|
+| `sleep 240` 在 Termux 实测跑成 400s+ | 改 `python3 -c 'time.sleep(N)'`，M 走 wakelock 后计时准确 |
+| 无污染判定，脏样本进统计 | 每轮跑 sidecar，`susp_cum>1000ms` 即剔除 |
+| 交替靠手工控制节奏 | 脚本内确定性执行，记录每轮 md5 / 频率 / 真实耗时 |
+
+已在跑的批次：`nrun.sh wl ./b-old 8 300`（8 轮 × 300 秒）。
+
+**先导样本（已确认 VALID）**：
+
+| tag | 二进制 | 真实耗时 | serial | BdsDxe | susp_cum | 结果 |
+|---|---|---|---|---|---|---|
+| wl（13.26） | b-old | 127s | 20 | 2 | — | 到 Shell> |
+| sc（本轮） | b-old | ~90s | 20 | 2 | 1ms | 到 Shell> |
+
+
+### 13.28 P0-a 定位（二次修正）：复用 RAM 槽位时新 page_gen 与旧 block 的代际混叠
+
+**本节初稿写的 `xchained` 登记/注销不对称是错的。** 我推演"同一 idx 可重复登记"，
+但 `dispatch.c:829` 本来就有 `|| m->slot_xpa[idx]` 在挡：
+
+```c
+if (page_gen != b->gen || m->slot_xpa[idx]) { unlock; return; }   /* 已在表中就拒绝 */
+m->slot_xpa[idx] = page_pa | 1;
+m->xchained[m->nxchained++] = idx;
+```
+
+登记要求 `slot_xpa==0`、注销要求 `slot_xpa==tpa`，两者对称，
+`nxchained <= max_slots` 成立，**不会越界**。
+
+我第二次推演"`hv_ram_lookup` 返回 NULL 未检查"也不成立：
+`dispatch.c:146` 的 `pa` 来自 `hv_mmu_fetch()`，而它在
+`const uint32_t *p = hv_phys_ptr(m, w.pa, 4); if (!p) { abort; return NULL; }`
+里已经用同一套 `hv_ram_lookup` 校验过，非 RAM 走不到 `lookup()`。
+
+（8 个 `hv_ram_lookup` 调用点里 6 个显式查 NULL，`mmu.c:844` 由上一行的
+`if (!p)` 隐式守护，`dispatch.c:146` 由 `hv_mmu_fetch` 隐式守护。都安全，
+但后两处是**隐式依赖**，值得加注释。）
+
+#### 真正的机制：`add_ram` 复用槽位时，page_gen 归零
+
+```c
+/* machine.c: add_ram —— 复用 retired 槽位 */
+for (i = 0; i < m->nram; i++)
+    if (!m->ram[i].host && !m->ram[i].size) { r = &m->ram[i]; break; }
+...
+r->pa = pa; r->size = size; r->host = host;
+r->page_gen = calloc(pages, sizeof *r->page_gen);   /* 全新数组，内容全 0 */
+```
+
+而 `del_ram` 是彻底的（`henge-engine.c:160-165`）：
+
+```c
+free(r->code_pages);
+free(r->page_gen);      /* 真的释放 */
+free(r->whint);
+r->code_pages = r->page_gen = r->whint = NULL;
+r->host = NULL; r->size = 0;
+```
+
+`del_ram` 在释放前还做了正确的失效（步骤 1：逐页 `hv_invalidate_code`，
+把 `page_gen[pg]` 递增，让该页的 block 失配）。**但那份递增随着
+`free(page_gen)` 一起消失了** —— 新槽位的 `page_gen` 是从 0 开始的全新数组。
+
+于是旧 block 的判据：
+
+```c
+/* dispatch.c:144 快速命中 */
+c->pa == pa && c->flags == flags && c->ram->page_gen[c->pg] == c->gen
+```
+
+- `c->ram` 指向 `&m->ram[i]` —— 结构体地址不变（槽位复用，不 compact）
+- `c->pa` —— pflash 复用的正是**同一个 pa**（64 MB 变量存储窗口）
+- `page_gen[c->pg]` —— 新数组，**0**
+- `c->gen` —— 上一个占位者首次翻译时也是 **0**
+
+**四项全中 → 返回旧 block → 执行按旧 host 内存翻译出来的代码。**
+
+而旧 `host` 已经被 QEMU 交给别人（`memory_region_rom_device_set_romd()`
+换的是同一段窗口的后备内存），所以那段代码里的硬编码 host 地址
+指向不再属于 guest 的内存 → **随机 SIGSEGV**。
+
+#### 为什么症状恰好是"与 pflash/盘相关、随机位置"
+
+`del_ram_flags` 的注释自己写了现场：
+
+> pflash calls `memory_region_rom_device_set_romd()` on every CFI command write,
+> and with the listener finally wired each toggle is a del + add of the whole
+> 64 MB variable-store window.
+
+**每次 CFI 命令写 = 一对 del+add**，UEFI 阶段密集发生 → 代际混叠的机会极多。
+这也解释了历史症状 "`failed to mirror virt.flash1` x27"——
+那是 `HV_MAX_RAM=8` 被耗尽的另一条线（已由槽位复用修掉），
+而槽位复用本身引入了这条新的混叠路径。
+
+#### 修复：给 HvRam 加 epoch，block 记住它
+
+```c
+/* machine.h: HvRam */
+uint32_t epoch;      /* bumped by every add_ram() */
+
+/* machine.h: HvBlock */
+uint32_t ram_epoch;  /* ram->epoch when translated */
+
+/* machine.c: add_ram，在替换数组之前 */
+r->epoch++;
+
+/* dispatch.c: 5 处 */
+nb.ram_epoch = ram->epoch;                       /* 建 block 时记录 */
+c->ram_epoch == c->ram->epoch && ...             /* 144 快速命中 */
+cur->ram_epoch != cur->ram->epoch || ...         /* 221 块退出判 stale */
+b->ram_epoch != b->ram->epoch || ...             /* 716 自检统计 */
+b->ram_epoch != b->ram->epoch || ...             /* 830 跨页 chaining */
+```
+
+**为什么 epoch 够用而 page_gen 不够**：`page_gen` 是"页级"的，被复用会归零；
+`epoch` 是"region 级"的单调计数器，`calloc` 不会把它清零（结构体字段，
+只有 `add_ram` 自己 `++`）。所以任何一次槽位复用都必然让旧 block 失配。
+
+#### 为什么这个修改必须进 `local-edits.patch`
+
+`add_ram` / block 检查都在 `engine/core/` 内，没有 seam。按 `VENDORED-FROM` 的规矩：
+
+```
+local-edits.patch  541 → 634 行（+3 个文件、8 个 hunk）
+```
+
+**验证方法（不是"应该能"，是真跑了）**：
+
+```sh
+# 1. 现有 patch 从干净上游应用
+cp -r $UP/{core,host,compat} /tmp/v && cd /tmp/v
+patch -p1 --forward --silent < local-edits.patch     # rc=0
+
+# 2. 合成后的 patch 必须逐字节重建当前 engine
+cd engine && diff -r -q /tmp/v/core core
+# → ✅ core/ 完全一致
+```
+
+**这也是 13.18 那个错误的反面**：那次我直接改了 `engine/` 下的文件却没进 patch，
+等于本地改动在下次 sync 时会被静默丢弃。
+
+#### 与 P0-b 的关系
+
+P0-b（ADD 的 release-store 写序）是另一个独立问题，在 `memop.c`。
+本条修的是"旧翻译被误判为有效"，与内存序无关；
+但两者都可能产生 SIGSEGV，所以修完 P0-a 后仍需单独复现 P0-b。
+
