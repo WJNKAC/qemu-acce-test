@@ -25,6 +25,10 @@ SC=$H/soak-$TAG.tsv
 VARS=$H/soak-$TAG.img
 DISK=$H/soak-$TAG.qcow2
 MPORT=${MPORT:-4470}
+# 13.55：Android 没有 /etc/resolv.conf，libslirp 的 get_dns_addr() 恒失败。
+# 打过 0002 的二进制（q-p0a9+）读这个变量补上上游 DNS。老二进制不 getenv 它。
+SLIRP_DNS_SERVER=${SLIRP_DNS_SERVER-223.5.5.5}
+[ -n "$SLIRP_DNS_SERVER" ] && export SLIRP_DNS_SERVER
 MAXLOG=${MAXLOG:-8000000}       # serial 滚动阈值（保最近 ~40 轮）
 END=$(( $(date +%s) + HOURS * 3600 ))
 
@@ -84,7 +88,9 @@ while [ "$(date +%s)" -lt "$END" ]; do
     D=$((DB - DM - SUSP)); [ $D -gt 0 ] && SUSP=$((SUSP + D))
     DF=$(df /data 2>/dev/null | tail -1 | awk '{print $4}')
     N=$(grep -acv '^#' "$LOG" 2>/dev/null); N=${N:-0}
-    echo "$((DM/1000)) $RN ${R:--1} $SUSP $(cnt 'state=ok') $(cnt 'state=refused') $(cnt 'state=timeout') $(cnt 'code=200') $(cnt 'code=000') $(cnt 'PROBE-ERR') $N ${DF:-0}" >> "$SC"
+    # 最后一列是 err:<Type>，不是 'PROBE-ERR' —— 探针从来没打过那个串，
+    # 数它等于永远 0（13.53 在 seedtest.sh 里改过一次，这里漏了，第五次同类）。
+    echo "$((DM/1000)) $RN ${R:--1} $SUSP $(cnt 'state=ok') $(cnt 'state=refused') $(cnt 'state=timeout') $(cnt 'code=200') $(cnt 'code=000') $(cnt 'state=err:') $N ${DF:-0}" >> "$SC"
 
     # --- 三类仪器故障 ---
     BIDN=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
@@ -118,17 +124,30 @@ while [ "$(date +%s)" -lt "$END" ]; do
     sleep 10
 done
 
-kill -9 $QP 2>/dev/null
+cleanup
 sleep 1
 trap - EXIT HUP INT TERM
 
 # ---- 汇总 ----
+# ⚠ roll_log 会把日志前半截掉，`cnt` 是从当前日志现数的 —— 滚动后数会**倒退**，
+# 于是"整夜跑了多少轮"会被读成最后一屏的量。所以汇总取 TSV 各列的 **max**
+# （每 10 s 采一次快照，滚动前后的峰值即累计量；它仍是下界，不是精确值）。
+# 列序（见文件头）：1 t_s  2 round  3 rss_kb  4 dsusp  5 ok  6 refused  7 timeout
+#                   8 curl200  9 curl000  10 err  11 lines  12 df
+# 只取 2/5/6/7/8/9/10 —— 3、4 不能取 max（rss 会回落，dsusp 本来就是累计量）。
+read -r RMAX OK REF TO C2 C0 PE <<EOF
+$(awk 'NR>1 {
+    if ($2+0 > r) r = $2+0
+    if ($5+0 > m5) m5 = $5+0; if ($6+0 > m6) m6 = $6+0; if ($7+0 > m7) m7 = $7+0
+    if ($8+0 > m8) m8 = $8+0; if ($9+0 > m9) m9 = $9+0; if ($10+0 > m10) m10 = $10+0
+} END { printf "%d %d %d %d %d %d %d\n", r, m5, m6, m7, m8, m9, m10 }' "$SC" 2>/dev/null)EOF
+RMAX=${RMAX:-0}; OK=${OK:-0}; REF=${REF:-0}; TO=${TO:-0}; C2=${C2:-0}; C0=${C0:-0}; PE=${PE:-0}
+# BEGIN/END 直接数日志只是"当前窗口内"的量（滚动后必然小于 RMAX），留作参照。
 BEG=$(cnt 'NETPROBE-BEGIN'); ENDN=$(cnt 'NETPROBE-END')
-OK=$(cnt 'state=ok'); REF=$(cnt 'state=refused'); TO=$(cnt 'state=timeout')
-C2=$(cnt 'code=200'); C0=$(cnt 'code=000'); PE=$(cnt 'PROBE-ERR')
 {
 echo "=== soak $TAG 汇总 ==="
-echo "轮次: BEGIN=$BEG END=$ENDN  探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE"
+echo "轮次: 累计(TSV max)=$RMAX   当前日志窗口内 BEGIN=$BEG END=$ENDN"
+echo "探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE   ← 均为累计下界"
 echo "dsusp_cum_ms=$SUSP  $( [ $SUSP -lt 1000 ] && echo VALID || echo INVALID )"
 echo "crash=$CRASH devreboot=$DEVRB"
 echo "bin_md5=$BINMD5  boot_id=$BID0"
