@@ -6906,3 +6906,123 @@ export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1
 `-D` 也必须给（Android 无 `/etc/resolv.conf`，passt 取不到 nameserver）。
 **不要给 `-a` / `-g`** —— 给了宿主不拥有的地址会双峰（FINDINGS.md 归因）。
 
+
+---
+
+### 13.51 passt 上跑 reboot 序列：先修三处 probe/脚本的耦合 bug
+
+passt 打通（13.50）后第一件事是把它接进 reboot 序列。**没直接跑 20 轮，
+先跑 2 轮**——这一步抓出三个 bug，其中两个会把结果读成完全错误的结论。
+
+#### 一、`seedtest.sh` 支持 `NET=passt`
+
+`-netdev` 从写死改成按 `NET` 选：
+
+```sh
+NET=slirp  →  -netdev user,id=n0
+NET=passt  →  passtlaunch passt -f -q -F %PFD% -D $PASST_DNS -- qemu ... -netdev socket,id=n0,fd=%QFD%
+```
+
+公共参数收进 `QEMU_ARGS`，并**加一条断言**：
+
+```sh
+for v in "$LOG" "$VARS" "$DISK" "$SEED" "$BIN" "$BIOS"; do
+    case "$v" in *" "*) echo "ABORT: 路径含空格..."; exit 2 ;; esac
+done
+```
+
+**为什么需要这条**：shell 没有数组，`$QEMU_ARGS` 靠无引号展开传参。
+实测 `-serial file:/tmp/my log.txt` 会被拆成 `[2] file:/tmp/my [3] log.txt`。
+当前路径都无空格，但这是个静默炸弹。
+
+#### 二、★ probe 硬编码了 slirp 的 DNS：`10.0.2.3`
+
+首轮 2 轮数据（`st-p2`）：
+
+```
+NETPROBE-TCP-GW22   state=refused    ← 网关通
+NETPROBE-TCP-DNS53  state=timeout    ← 超时！
+NETPROBE-CURL       code=000         ← 外网不通
+```
+
+**看起来像"passt 网络不通"。实际是 probe 在查一个不存在的地址。**
+
+`10.0.2.3` 是 **slirp 内建 DNS**。passt 下 guest 的 DNS 是 `-D` 下发的
+`223.5.5.5`（路由表里明确有 `223.5.5.5 via 192.168.1.1`），
+而 probe 硬编码去连 `10.0.2.3:53` → 必然 timeout。
+
+这正是 `STATES.md` 里"`timeout` 是唯一可疑信号"的**误用**：
+信号本身没错，但它测的是一个不该测的地址。
+
+**修法**：从路由表动态取 DNS。
+
+```sh
+DNS=""
+for ip in $(ip -4 route | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}'); do
+    [ "$ip" = "$GW" ] && continue     # 排除网关
+    DNS=$ip; break
+done
+[ -z "$DNS" ] && DNS=10.0.2.3         # 兜底 slirp 默认
+```
+
+**取法本身也错过一次**：第一版写
+`awk '$1 ~ /^[0-9]+\./ {print $1; exit}'`，取到的是**网段**
+（`10.0.2.0/24`），不是主机。改成只匹配纯 IP（无 `/`）后：
+
+| 路由表 | 取到的 DNS |
+|---|---|
+| slirp（10.0.2.x） | `10.0.2.3` ✅ |
+| passt（169.254.2.1 + 223.5.5.5） | `223.5.5.5` ✅ |
+
+两套路由表都在本地离线验过（`/tmp/r1.txt`、`/tmp/r2.txt`）。
+
+修完后同一场景：
+
+```
+NETPROBE-DNS server=223.5.5.5
+NETPROBE-TCP-DNS53 state=ok        ← 从 timeout 变成 ok
+超时=0
+```
+
+#### 三、`PASST_ADDR: parameter not set`：补丁只插了注释漏了赋值
+
+`set -u` 下未赋值变量直接 FATAL，整个汇总段断在那里。
+根因是我用 `str.replace` 打补丁时，替换串里只有注释和 `if`，
+**赋值语句被漏掉了**——而 `assert old in s` 只检查"原文存在"，
+不检查"新内容完整"，所以静默通过。
+
+修法：先给默认值再在分支里覆盖：
+
+```sh
+PASST_ADDR=n/a; PASST_GW=n/a
+if [ "$NET" = passt ]; then
+    PASST_ADDR=$(grep -a 'NETPROBE-ADDR' "$LOG" | tail -1 | sed -E 's/.*NETPROBE-ADDR //' | tr -d '\r')
+    ...
+fi
+```
+
+**教训**：`replace` 式打补丁，`assert` 要检查**新内容也到位**
+（比如 `assert 'PASST_ADDR=n/a' in s`），否则"改了一半"和"改成功"无法区分。
+
+#### 四、`END=1` 而 `BEGIN=2`：超时截断，不是故障
+
+第一版 `timeout` 给 260 s，而 2 轮需要 `115 + 85 ≈ 200 s` **加上**最后一轮的
+等待；实际在 round 2 已 `BEGIN` 但 `NETPROBE-END` 没等到就被 kill。
+所以"完整性: BEGIN=2 != END=1"是**我的超时设短**，不是 probe 半途死。
+
+（13.47 那次 18/20 也是同一原因。**这是第二次**，该写进脚本文档。）
+
+#### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| `seedtest.sh` 双后端 | ✅ `NET=slirp|passt` |
+| probe 硬编码 DNS | ❌ **bug，已修**（曾把 passt 读成"不通"） |
+| DNS 提取取到网段 | ❌ 已修（只匹配纯 IP） |
+| `PASST_ADDR` 未赋值 | ❌ 已修（补丁漏赋值） |
+| `END < BEGIN` | ⚠️ **超时设短，第二次**（非故障） |
+
+**三条都是"会读出错误结论"的 bug，不是崩溃。**
+如果直接跑 20 轮，最可能得到的结论是"passt 后端重启后网络不通"——
+一个完全错误的结论，而且证据看起来非常充分（timeout + curl 000）。
+

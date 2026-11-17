@@ -31,6 +31,11 @@ ERR=$H/st-$TAG.err
 VARS=$H/st-$TAG.img
 DISK=$H/st-$TAG.qcow2
 MPORT=${MPORT:-4460}
+# 网络后端：slirp（默认，向后兼容）或 passt（走 passtlaunch + socketpair）
+NET=${NET:-slirp}
+# passt 的必须项：三个运行时开关 + DNS。缺一个就是 SIGSYS 或取不到 nameserver。
+export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1
+PASST_DNS=${PASST_DNS:-223.5.5.5}
 
 [ -x "$BIN" ] || { echo "MISSING $BIN"; exit 3; }
 [ -f "$SEED" ] || { echo "MISSING $SEED"; exit 3; }
@@ -43,16 +48,48 @@ cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 cp -f ${DISK_SRC:-$H/deb12-clean.qcow2} "$DISK" 2>/dev/null; chmod 644 "$DISK" 2>/dev/null
 rm -f "$LOG" "$ERR"
 
-$BIN -L "$BIOS" -M virt,gic-version=3 -cpu max -m 2048 \
-    -display none -smp "$SMP" -accel henge \
-    -drive if=pflash,format=raw,unit=0,file=$BIOS/edk2-aarch64-code.fd,readonly=on \
-    -drive if=pflash,format=raw,unit=1,file=$VARS \
-    -drive if=none,id=d0,format=qcow2,file=$DISK -device virtio-blk-pci,drive=d0 \
-    -drive if=none,id=sd,format=raw,file=$SEED -device virtio-blk-pci,drive=sd \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-    -serial file:$LOG -monitor tcp:127.0.0.1:$MPORT,server,nowait \
-    >/dev/null 2>"$ERR" &
-QP=$!
+# 公共参数抽出来，两种后端只有 -netdev 一行不同。
+# %QFD% 只在 passt 模式下有意义（launcher 会替换成 socketpair 那端的 fd）。
+QEMU_ARGS="-L $BIOS -M virt,gic-version=3 -cpu max -m 2048
+  -display none -smp $SMP -accel henge
+  -drive if=pflash,format=raw,unit=0,file=$BIOS/edk2-aarch64-code.fd,readonly=on
+  -drive if=pflash,format=raw,unit=1,file=$VARS
+  -drive if=none,id=d0,format=qcow2,file=$DISK -device virtio-blk-pci,drive=d0
+  -drive if=none,id=sd,format=raw,file=$SEED -device virtio-blk-pci,drive=sd
+  -serial file:$LOG -monitor tcp:127.0.0.1:$MPORT,server,nowait"
+
+# QEMU_ARGS 是靠无引号展开传参的（shell 没有数组），所以任何一个含空格的
+# 路径都会被拆成两个参数。实测过：file:/tmp/my log.txt 会变成
+# [2] file:/tmp/my  [3] log.txt。这里提前断言，别等到 QEMU 报奇怪的错。
+for v in "$LOG" "$VARS" "$DISK" "$SEED" "$BIN" "$BIOS"; do
+    case "$v" in
+      *" "*) echo "ABORT: 路径含空格，QEMU_ARGS 展开会拆断: $v"; exit 2 ;;
+    esac
+done
+
+case "$NET" in
+  slirp)
+    # shellcheck disable=SC2086
+    $BIN $QEMU_ARGS -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+        >/dev/null 2>"$ERR" &
+    QP=$!
+    ;;
+  passt)
+    # passt 侧不能 bind（SELinux 拒），所以用 socketpair + --fd 两侧都不 bind。
+    # 详见 work/probe/passtlaunch.c 与 work/seed/passt/README.md。
+    [ -x "$H/passtlaunch" ] || { echo "MISSING $H/passtlaunch"; exit 3; }
+    [ -x "$H/passt" ]       || { echo "MISSING $H/passt"; exit 3; }
+    # shellcheck disable=SC2086
+    $H/passtlaunch \
+        $H/passt -f -q -F %PFD% -D "$PASST_DNS" \
+        -- \
+        $BIN $QEMU_ARGS -netdev socket,id=n0,fd=%QFD% -device virtio-net-pci,netdev=n0 \
+        >/dev/null 2>"$ERR" &
+    QP=$!
+    ;;
+  *)
+    echo "bad NET=$NET (slirp|passt)"; exit 2 ;;
+esac
 cleanup() { kill -9 $QP 2>/dev/null; }
 trap cleanup EXIT HUP INT TERM
 
@@ -170,6 +207,15 @@ if [ "$BEG" -eq "$END" ] && [ "$BEG" -gt 0 ]; then
     say "完整性: 每轮都有 END —— 无半途死"
 else
     say "完整性: BEGIN=$BEG != END=$END  ⚠ 有轮次中断"
+fi
+# set -u 下未赋值变量会直接 FATAL，而这两个只在 passt 模式下有意义。
+# 第一次写这段时赋值语句被漏掉了（replace 只插了注释和 if），
+# 结果整个汇总在这里断掉 —— 所以先给默认值，再在 passt 分支里覆盖。
+PASST_ADDR=n/a; PASST_GW=n/a
+if [ "$NET" = passt ]; then
+    PASST_ADDR=$(grep -a 'NETPROBE-ADDR' "$LOG" 2>/dev/null | tail -1 | sed -E 's/.*NETPROBE-ADDR //' | tr -d '\r')
+    PASST_GW=$(grep -a 'NETPROBE-GW' "$LOG" 2>/dev/null | tail -1 | sed -E 's/.*gw=//' | tr -d '\r')
+    say "passt: 地址=${PASST_ADDR:-n/a}  网关=${PASST_GW:-n/a}  （应分别为 169.254.x/8 与宿主真实网关）"
 fi
 say "boot_id: 起始 $BID0   结束 $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 [ "${DEVREBOOT:-0}" = 1 ] && say "!! 判定: 整机重启过（不是 QEMU 的问题）"
