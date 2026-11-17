@@ -3462,3 +3462,236 @@ flaky 的来源是别的：4 行档和 12 行档是**两种不同的故障**，
 | 3 | 若 fire 但 irqstate 仍 0 → 查 GIC PPI 27 使能（`GICR_ISENABLER0`） | A |
 | 4 | 若永不 fire → 查 virtual clock 与 host clock 的速率差（epoch 漂移） | C |
 | 5 | 4 行档单独查（`StartImage → Aborted`），与 timer 无关 | B |
+
+
+### 13.23 KVM 后端 vs henge 后端：一个"不需要问"、一个"必须问"
+
+用户要求对比 QEMU 的 KVM 加速后端与我们的 henge 后端在**与 QEMU 衔接方式**上的差别。
+查完源码，结论可以用一行代码的差别概括：
+
+```
+accel/kvm/*.c + target/arm/kvm.c:   grep -c "wait_ticks|sleep_us|cond_timedwait|nanosleep" = 0
+accel/henge/engine/core/dispatch.c: wait_for_interrupt() 里有全部四个
+```
+
+#### 一、KVM：WFI 在内核里，QEMU 完全不知道
+
+`include/system/kvm.h:83` 的原文：
+
+> `kvm_halt_in_kernel` — Returns: true if halted cpus should still get a
+> `KVM_RUN` ioctl to run inside of kernel space.
+
+`target/arm/kvm.c:605`：
+
+```c
+/* For ARM interrupt delivery is always asynchronous,
+ * whether we are using an in-kernel VGIC or not. */
+kvm_async_interrupts_allowed = true;
+
+/* PSCI wakes up secondary cores, so we always need to
+ * have vCPUs waiting in kernel space */
+kvm_halt_in_kernel_allowed = true;
+```
+
+于是 KVM 的 vCPU 线程（`kvm-accel-ops.c:31`）简单到只有：
+
+```c
+do {
+    qemu_process_cpu_events(cpu);
+    if (cpu_can_run(cpu)) {
+        r = kvm_cpu_exec(cpu);          /* 一次 KVM_RUN ioctl */
+        if (r == EXCP_DEBUG) cpu_handle_guest_debug(cpu);
+    }
+} while (!cpu->unplug || cpu_can_run(cpu));
+```
+
+**guest 执行 WFI 时：**
+- ARM 的 KVM 里**没有 `KVM_EXIT_HLT` 处理**（只有 `target/i386/kvm.c` 和
+  `target/ppc/kvm.c` 有），因为 WFI 根本不让 QEMU 看到
+- vCPU 线程阻塞在 `KVM_RUN` 里，**内核负责睡、内核负责醒**
+- 内核同时拥有 timer（vtimer）和中断控制器（VGIC），所以它自己知道何时该醒
+
+**关键：QEMU 侧完全不存在"WFI 要睡多久"这个问题。**
+`gt_timer` 依然在 QEMU 里 arg（guest 写 CNTV_CVAL 仍走 cpreg），
+但那只用于 QEMU 自己的虚拟时钟推进，与 vCPU 的 park 无关。
+
+#### 二、henge：WFI 在用户态，引擎必须问 QEMU "睡多久"
+
+我们的结构：
+
+```
+henge_vcpu_thread_fn（henge-accel-ops.c）:
+    bql_unlock();
+    r = hv_run(cpu);            ← 一次函数调用，在用户态跑 JIT
+    ...
+    bql_lock();
+```
+
+`hv_run` 内部遇到 WFI 时（`engine/core/dispatch.c:1176`）：
+
+```c
+case HV_EXIT_WFI:
+    if (wait_for_interrupt(cpu) != 0) return HV_EXIT_WFI;
+```
+
+`wait_for_interrupt()`（同文件 523 行）必须自己决定睡多久：
+
+```c
+uint64_t deadline = m->tick ? m->tick(m, cpu) : 0;      /* ← 问 QEMU */
+...
+uint64_t wait_ticks = deadline && deadline > now ? deadline - now : 240000;
+if (wait_ticks > 240000) wait_ticks = 240000;           /* 10ms 兜底 */
+hv_big_unlock(m);
+park(cpu);
+pthread_cond_timedwait_relative_np(&p->wake_cv, &p->wake_mu, &ts);
+```
+
+`m->tick` 注册的是 `henge_tick_delta24()`（`henge-cpu.c:551`），它读
+**QEMU 的 `env->cp15.c14_timer[]`**，换算成 24MHz 域的 tick 数返回。
+
+**所以 henge 必须回答一个 KVM 从来不需要回答的问题：
+"引擎的 24MHz 时钟域" 与 "QEMU 的 virtual clock 域" 怎么换算。**
+
+#### 三、四条结构性差异
+
+| 维度 | KVM | henge | 后果 |
+|---|---|---|---|
+| **执行体** | 内核（KVM_RUN） | 用户态 JIT（hv_run） | henge 每次退出都要自己决定下一步 |
+| **WFI** | 内核处理，QEMU 不知情 | 引擎 park 在 condvar | **henge 必须算 deadline** |
+| **timer** | 内核（vtimer） | QEMU（`sysreg_external=1`） | henge 的 WFI 要**跨域读** QEMU 状态 |
+| **中断** | 内核 VGIC → 直接注入 vCPU | QEMU GIC → `CPU_INTERRUPT_HARD` → `henge_sync_irq` → `p->irq_line` → 引擎按 PSTATE 判定 | 多一次电平拷贝 |
+| **时钟** | 一个域（内核） | **两个域**（引擎 24MHz / QEMU virtual clock） | **换算错了就睡错时长** |
+| **状态同步** | exit 时 `kvm_arch_put/get_registers` | 每条 seam 过 BQL + `henge_cpreg_write` | henge 的 env 是"半影子" |
+
+#### 四、这不是"我们做错了"，是"用户态执行器绕不开的代价"
+
+KVM 之所以能"不问"，是因为它把 WFI 交给了内核——一个**同时拥有 timer 和中断**的实体。
+henge 把执行留在用户态，timer 和中断都在 QEMU，于是 WFI 时必须：
+
+1. 读 QEMU 的 timer 状态（跨域）
+2. 换算成自己的时钟域
+3. 睡对时长
+4. 醒来后还要再查一次 `p->irq_line`（因为中断是另一个实体投递的）
+
+**四个步骤，每一步都有出错的空间，而 KVM 一步都没有。**
+
+这也解释了为什么这个移植里所有"活性"问题都集中在 WFI/timer 交界处：
+`henge_tick_delta24` 是整个加速器里**唯一一个"用它方的状态、按己方的时钟、算第三种量"**的函数。
+
+#### 五、对当前 bug 的指向
+
+trace 已证明（13.22）：12 行档里 timer **被 arm 到 44.5 秒**
+（`next tick 0xa5b35394` @ 62.5MHz；`-cpu max` 带
+`ARM_FEATURE_BACKCOMPAT_CNTFRQ` → 确实是 62.5MHz，`cpu-max.c:30`），
+但整个窗口 `irqstate` 恒 0、只有 1 次 recalc。
+
+按 KVM 的模型这个现象不可能出现（内核自己会醒）。按 henge 的模型，它指向
+`henge_tick_delta24` 里那一步跨域换算——**这正是 §三 表里唯一标红的格子**。
+
+#### 六、测量方法上的差异（顺带记下）
+
+KVM 的"活性"可以靠 `kvm_halt_in_kernel` 这类布尔量判断
+（`kvm_vcpu_thread_is_idle` = `!kvm_halt_in_kernel()`）。
+henge 没有等价物，必须靠 `schedstat` / `cond_timedwait` 计数 / trace 组合判断——
+这也是为什么这个项目的仪器建设花了这么多轮。
+
+
+### 13.24 ★★★ 根因确认：QEMU_CLOCK_VIRTUAL 停走，timer 永远到不了期
+
+用户建议先用半小时查频率域、再跑 190 秒。照做后发现了真正的根因，而且**不是换算问题**。
+
+#### 一、先把三处换算逐一核对（都不是问题）
+
+| 检查点 | 结论 |
+|---|---|
+| `gt_get_countervalue()` | `qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / gt_cntfrq_period_ns(cpu)`，**整数除法**（`helper.c:1358`） |
+| `gt_cntfrq_hz` 实际值 | `-cpu max` 带 `ARM_FEATURE_BACKCOMPAT_CNTFRQ`（`cpu-max.c:30`），所以是 **62.5 MHz**，`GTIMER_BACKCOMPAT_HZ`（`internals.h:89`） |
+| `timer_mod(ts, nexttick)` 单位 | `gt_timer` 用 `timer_new(QEMU_CLOCK_VIRTUAL, scale, cb, cpu)` 创建，scale = `gt_cntfrq_period_ns` = 16 ns；`timer_mod` 传 tick，内部 ×scale。**单位正确** |
+| `henge_tick_delta24` 换算 | `now_guest = muldiv64(now_ns, freq, 1e9)`，与 `gt_get_countervalue` 数学等价；`best × 24e6 / freq` 转到 24MHz 域。**正确** |
+| CNTVOFF 域 | 探针实测 `cntvoff_el2=0`、`engine_cntvoff=0` → 两边同域 |
+
+**所以 44.5 秒 / 52.7 秒 / 110 秒这些 deadline 都是对的，换算没有问题。**
+
+（顺带纠正 13.22 里我按 62.5MHz 算出 44.5 秒的那句话——数值对，但当时不知道 `-cpu max` 带 BACKCOMPAT，是猜的。）
+
+#### 二、真根因：vm clock 几乎不走
+
+探针（`HV_TICK_TRACE=1`，打印 virt / vcval / delta / cntvoff）：
+
+```
+virt=9.373s   vcval=3296093153  delta=43.365s  cntvoff_el2=0
+virt=10.895s  vcval=3296093153  delta=41.843s  cntvoff_el2=0
+```
+
+- `vcval = 3296093153` tick @62.5MHz = **52.7 秒**（guest 自己写的 deadline）
+- `delta` 从 43.365 降到 41.843，**正常递减**
+- **但这次 run 的墙钟已经过了 240 秒，`virt` 只走到 10.9 秒**
+
+另一个 run（tk）：
+
+```
+virt=4.819s   rt=110107.067s
+virt=6.341s   rt=110108.590s
+```
+
+- `rt` 增量 1.523 秒，`virt` 增量 1.522 秒 → **短窗口内两者同速**
+
+**两条数据合起来给出结论：vm clock 在"guest 正在执行/正在进出 WFI"的短窗口内按墙钟走，但在整体上远远落后。**
+240 秒墙钟只推进 10.9 秒 vm 时间，约 **22 倍稀释**。
+
+于是：
+
+```
+guest 写 cval = now + 52.7s（vm 域）
+  → 需要 52.7 秒 vm 时间才能到期
+  → 22 倍稀释 → 约 1160 秒墙钟
+  → 所有观察窗口（240–600 秒）都在 fire 之前结束
+  → 引擎每 10ms 醒一次、算 delta、发现还有 50 秒、继续睡
+  → 看起来就是"死等一个不来的中断"（R1 的 380 秒零增长）
+```
+
+#### 三、代码链路（为什么 vm clock 会停）
+
+```
+qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)          util/qemu-timer.c:656
+  → cpus_get_virtual_clock()                   system/cpus.c:215
+      if (cpus_accel && cpus_accel->get_virtual_clock)
+          return cpus_accel->get_virtual_clock();
+      return cpu_get_clock();                  ← henge 没有实现，走这里
+  → cpu_get_clock()                            system/cpu-timers.c:90
+      time = timers_state.cpu_clock_offset;
+      if (timers_state.cpu_ticks_enabled)      ← 关键开关
+          time += get_clock();                 ← CLOCK_MONOTONIC
+      return time;
+```
+
+**`cpu_ticks_enabled` 为 0 时，vm clock 返回常量 `cpu_clock_offset`，完全冻结。**
+它由 `cpu_enable_ticks()` / `cpu_disable_ticks()` 控制，
+调用点只有两个（`system/cpus.c:796` 与 `:304`），都在 `vm_start` / `do_vm_stop` 里。
+
+**KVM 为什么不受影响**：KVM 从不读 vm clock 去算 WFI 时长（13.23），
+它的 timer 在内核里按真实时间走。**只有 henge 依赖 vm clock，所以只有 henge 会踩这个坑。**
+
+#### 四、修复方向（三条，按侵入性排序）
+
+| # | 方案 | 做法 | 风险 |
+|---|---|---|---|
+| **A** | 给 henge 实现 `get_virtual_clock` | `AccelOpsClass.get_virtual_clock` 返回基于 `QEMU_CLOCK_REALTIME` 的值 | 低；但 vm clock 语义会变（QEMU 的 timer 全用它） |
+| **B** | WFI 的 deadline 改用 realtime 算 | `henge_tick_delta24` 用 `CLOCK_REALTIME` 换算 delta | 低；只影响 park 时长，不动 QEMU timer |
+| **C** | 修 `cpu_ticks_enabled` 的初始化 | 查为什么 henge 下它是 0 / 间歇为 1 | 最彻底，但要确认不破坏 QEMU 其他假设 |
+
+**倾向 B**：它只改"睡多久"这一件事，不碰 QEMU 的 vm clock 语义，
+而 vm clock 对 QEMU 的其它设备（RTC、watchdog）仍保持原样。
+但 B 有个前提要验：**timer 到期后 QEMU 仍然要靠 vm clock 来 fire**，
+如果 vm clock 冻结，即使 B 让引擎睡对时长，QEMU 的 timer 还是不会到期。
+所以 **B 必须与 A 或 C 配套**——这正是需要下一步实验确认的。
+
+#### 五、这一轮的净收益
+
+| 结论 | 状态 |
+|---|---|
+| 44.5 / 52.7 / 110 秒这些 deadline 是 guest 真实写的，换算无误 | ✅ 确认 |
+| `cntvoff` 两边一致（都是 0） | ✅ 确认 |
+| timer 从未 fire | ✅ trace 只有 1 次 recalc，而 fire 必然产生第 2 次 |
+| vm clock 相对墙钟稀释约 22 倍 | ✅ 实测 |
+| 我的 timer mirror 修复从未生效（死代码） | ✅ 已撤销，编译通过 |

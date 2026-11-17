@@ -668,10 +668,10 @@ index 0000000000..236a495d9e
 +#endif
 diff --git a/accel/henge/engine/core/cpu.h b/accel/henge/engine/core/cpu.h
 new file mode 100644
-index 0000000000..13d3e54039
+index 0000000000..a73da9a5c9
 --- /dev/null
 +++ b/accel/henge/engine/core/cpu.h
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,306 @@
 +#ifndef HENGEVM_CPU_H
 +#define HENGEVM_CPU_H
 +
@@ -826,12 +826,6 @@ index 0000000000..13d3e54039
 +    uint64_t cntv_ctl, cntv_cval;
 +    uint64_t cntp_ctl, cntp_cval;
 +    uint64_t cntvoff;
-+    /* The virtual timer was written since the host last took a copy of it.
-+       Only the host needs this: inside the engine the registers are read
-+       directly, but a host that owns the interrupt controller has to be told
-+       about every change or its own timer device never gets armed.  Set by the
-+       CNTV_* write paths in sysreg.c, cleared by hv_engine_take_vtimer(). */
-+    int virt_timer_dirty;
 +
 +    uint64_t mpidr;
 +    uint32_t index;          /* which CPU: m->percpu[index] holds its caches and interrupt lines */
@@ -5729,10 +5723,10 @@ index 0000000000..84b3640409
 +#endif
 diff --git a/accel/henge/engine/core/sysreg.c b/accel/henge/engine/core/sysreg.c
 new file mode 100644
-index 0000000000..4954885a23
+index 0000000000..8f595c860e
 --- /dev/null
 +++ b/accel/henge/engine/core/sysreg.c
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,601 @@
 +#include "sysreg.h"
 +
 +#include <mach/mach_time.h>
@@ -6051,10 +6045,9 @@ index 0000000000..4954885a23
 +    case R(3, 3, 14, 2, 0): cpu->cntp_cval = counter() + (uint64_t)(int64_t)(int32_t)v; break;
 +    case R(3, 3, 14, 2, 1): cpu->cntp_ctl = v & 3; break;
 +    case R(3, 3, 14, 2, 2): cpu->cntp_cval = v; break;
-+    case R(3, 3, 14, 3, 0): cpu->cntv_cval = counter() - cpu->cntvoff + (uint64_t)(int64_t)(int32_t)v;
-+                            cpu->virt_timer_dirty = 1; break;
-+    case R(3, 3, 14, 3, 1): cpu->cntv_ctl = v & 3; cpu->virt_timer_dirty = 1; break;
-+    case R(3, 3, 14, 3, 2): cpu->cntv_cval = v; cpu->virt_timer_dirty = 1; break;
++    case R(3, 3, 14, 3, 0): cpu->cntv_cval = counter() - cpu->cntvoff + (uint64_t)(int64_t)(int32_t)v; break;
++    case R(3, 3, 14, 3, 1): cpu->cntv_ctl = v & 3; break;
++    case R(3, 3, 14, 3, 2): cpu->cntv_cval = v; break;
 +    default: goto other;
 +    }
 +    /* Timer outputs follow their registers at once, as in hardware: a masked
@@ -9922,10 +9915,10 @@ index 0000000000..26ce0594eb
 +echo "sync: done (upstream $(git -C "$UP" rev-parse --short HEAD 2>/dev/null || echo '?'), $PATCH applied)"
 diff --git a/accel/henge/henge-accel-ops.c b/accel/henge/henge-accel-ops.c
 new file mode 100644
-index 0000000000..574bbeecc3
+index 0000000000..57ce4c2f12
 --- /dev/null
 +++ b/accel/henge/henge-accel-ops.c
-@@ -0,0 +1,587 @@
+@@ -0,0 +1,550 @@
 +/*
 + * Henge accelerator: AccelOpsClass side (the vCPU thread)
 + *
@@ -9964,9 +9957,6 @@ index 0000000000..574bbeecc3
 +#include "target/arm/cpu-features.h"
 +#include "system/henge-accel.h"
 +#include "system/henge-engine.h"
-+/* arm_henge_set_vtimer: the accel-owned timer -> QEMU handoff.  Declared in
-+   internals.h because gt_recalc_timer (its callee) is private to target/arm. */
-+#include "target/arm/internals.h"
 +#include "exec/cpu-interrupt.h"
 +
 +/* The engine's per-CPU array is HV_MAX_CPUS entries; mirror that bound here
@@ -9984,17 +9974,6 @@ index 0000000000..574bbeecc3
 +
 +/* henge-accel.c: the engine's clock, and its two interrupt input lines. */
 +void henge_timer_setup(HvMachine *m, uint64_t freq);
-+
-+/*
-+ * Push the engine's virtual-timer state into QEMU under the BQL.
-+ *
-+ * Must be called with bql_lock() held: it reaches arm_henge_set_vtimer() ->
-+ * gt_recalc_timer(), which manipulates QEMUTimer and may drive the GIC irq
-+ * line.  The WFI path inside hv_run() cannot do this -- it runs with the BQL
-+ * dropped -- so it reads the engine's registers for its deadline instead, and
-+ * the push happens here at the next seam boundary.
-+ */
-+static void henge_push_vtimer(CPUState *cs);
 +void henge_timer_calibrate(HvMachine *m);
 +
 +/*
@@ -10274,7 +10253,6 @@ index 0000000000..574bbeecc3
 +                    break;
 +                }
 +                bql_lock();
-+                henge_push_vtimer(cs);
 +                henge_service_external_exit(cs, cpu, r);
 +                /* A cpreg write can program a timer that fires immediately. */
 +                henge_sync_irq(cs, cpu);
@@ -10283,7 +10261,6 @@ index 0000000000..574bbeecc3
 +            bql_lock();
 +            /* ------------------------------ */
 +
-+            henge_push_vtimer(cs);
 +            henge_sync_irq(cs, cpu);
 +            henge_dispatch_exit(cs, r);
 +        }
@@ -10453,27 +10430,6 @@ index 0000000000..574bbeecc3
 + * the interrupt.  Measured as a 26 s / 89 s RCU stall under GICv2 + nohz that
 + * TCG does not have.
 + */
-+/*
-+ * Runs with the BQL held, on the owning vCPU thread.  henge_sync_irq() below is
-+ * the mirror of this for the interrupt lines: it copies QEMU -> engine, this
-+ * copies engine -> QEMU for the one device whose registers the engine owns.
-+ *
-+ * Cheap when the guest did not touch its timer: one flag test and a return.
-+ */
-+static void henge_push_vtimer(CPUState *cs)
-+{
-+    HvMachine *m = henge_accel_machine();
-+    uint32_t ctl;
-+    uint64_t cval;
-+
-+    if (!m || !cs) {
-+        return;
-+    }
-+    if (hv_engine_take_vtimer(m, cs->cpu_index, &ctl, &cval)) {
-+        arm_henge_set_vtimer(cs, ctl, cval);
-+    }
-+}
-+
 +void henge_sync_irq_current(void)
 +{
 +    CPUState *cs = current_cpu;
@@ -11480,10 +11436,10 @@ index 0000000000..bc81c7bcb3
 +type_init(henge_type_init);
 diff --git a/accel/henge/henge-cpu.c b/accel/henge/henge-cpu.c
 new file mode 100644
-index 0000000000..1da170f334
+index 0000000000..a8a4b97a15
 --- /dev/null
 +++ b/accel/henge/henge-cpu.c
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,756 @@
 +/*
 + * Henge accelerator: the QEMU-side half of the bridge (registers)
 + *
@@ -12050,57 +12006,63 @@ index 0000000000..1da170f334
 +        return 0;
 +    }
 +
-+    /*
-+     * Read the timer from the engine, not from QEMU -- and do NOT push into
-+     * QEMU from here.
-+     *
-+     * Two separate bugs met in the first version of this function, and only one
-+     * of them was the one I was hunting:
-+     *
-+     *   1. Everything below used to read env->cp15.c14_timer[], which stayed
-+     *      zero forever because the engine handles CNTV_* inline and those
-+     *      accesses never reach QEMU's cpreg table.  So both timers were
-+     *      skipped, this returned 0, and wait_for_interrupt() fell back to its
-+     *      10 ms cap (measured: 8192 sleeps, ~82 s of a 96 s stall).
-+     *      Fixed by reading the engine's own registers.
-+     *
-+     *   2. The first fix also *pushed* the values into QEMU from right here --
-+     *      and this function runs inside hv_run(), which the vCPU thread
-+     *      enters after bql_unlock().  gt_recalc_timer() manipulates
-+     *      QEMUTimer and drives the GIC irq line; doing that without the BQL
-+     *      is a lock-order violation, and the likely reason a "fixed" binary
-+     *      measured no better than the old one.  The push now happens in
-+     *      henge-accel-ops.c, under bql_lock(), via henge_push_vtimer().
-+     *
-+     * Reading the engine's registers needs no lock, so this path is clean.
-+     */
-+    {
-+        HvMachine *m = henge_accel_machine();
-+        uint32_t tctl;
-+        uint64_t tcval;
-+
-+        if (m && hv_engine_peek_vtimer(m, index, &tctl, &tcval)) {
-+            /*
-+             * The engine's ctl carries ENABLE|IMASK; ISTATUS is derived.  The
-+             * epoch contract in henge_timer_calibrate() means cval is already
-+             * comparable against QEMU's counter, so the loop below works
-+             * unchanged -- only the source of the two numbers changed.
-+             */
-+            uint64_t virt_delta;
-+            uint64_t now_g = muldiv64(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
-+                                      freq, NANOSECONDS_PER_SECOND);
-+
-+            if ((tctl & 1) && !(tctl & 2)) {
-+                virt_delta = tcval - now_g;      /* unsigned: wraps "already past" */
-+                if ((int64_t)virt_delta > 0) {
-+                    best = virt_delta;
-+                }
-+            }
-+        }
-+    }
-+
 +    now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 +    now_guest = muldiv64(now_ns, freq, NANOSECONDS_PER_SECOND);
++
++    /*
++     * HV_TICK_TRACE: 每次 WFI 决策打一行 (now_guest, cval, delta)。
++     *
++     * 这个探针只为回答一个问题：**QEMU 的 virtual clock 在 vCPU park 期间
++     * 到底走不走**。
++     *
++     * 背景：trace 已证明 guest 写了 cval（arm_gt_recalc 打印 next tick），
++     * 而 arm_gt_vtimer_cb 到期时会再调一次 gt_recalc_timer —— 也就是说
++     * timer 真的 fire 了，trace 里必然出现第二次 recalc。实测只有一次，
++     * 说明从未 fire。两种可能：
++     *   (a) virtual clock 停了 → now_guest 不涨 → delta 恒定 → 永远不到期
++     *   (b) clock 在走，但 cval 被写成了一个极远的值
++     * 看 delta 的时间序列就能分清：减到 0 却不 fire 是 (b) 之外的第三种，
++     * delta 恒定就是 (a)。
++     */
++    if (getenv("HV_TICK_TRACE")) {
++        static uint64_t calls, last_print_ns;
++        calls++;
++        /* 每 ~500ms 打一次，避免把日志冲爆 */
++        if (now_ns - last_print_ns > 500000000ull) {
++            uint64_t vctl = env->cp15.c14_timer[GTIMER_VIRT].ctl;
++            uint64_t vcval = env->cp15.c14_timer[GTIMER_VIRT].cval;
++            int64_t d = (int64_t)(vcval - now_guest);
++            /* 两个时钟并排：这是判"vm clock 是否落后墙钟"的唯一直接证据。
++               QEMU_CLOCK_REALTIME 按墙钟走；QEMU_CLOCK_VIRTUAL 按"模拟进行中"
++               走（cpu_get_clock = cpu_clock_offset + get_clock()，且只在
++               timers_state.cpu_ticks_enabled 为真时累加）。两者比值的倒数
++               就是 guest 的时间被稀释的倍数。 */
++            int64_t rt_ns = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
++            /*
++             * cntvoff_el2 is the missing term.  gt_recalc_timer() computes
++             *     istatus = (count - offset >= cval)   with offset = cntvoff_el2
++             * while this probe's delta above is (cval - count) with no offset.
++             * If they disagree -- delta < 0 (deadline passed) yet ISTATUS stays
++             * 0 -- then cntvoff_el2 != 0 and the two sides are in different
++             * counter domains.  The engine never writes its own cpu->cntvoff
++             * (grep: no assignment anywhere), and CNTVOFF_EL2 does not match
++             * is_timer_ctl() (op1=4, not 3), so it falls through to
++             * `return -1` in write_reg() -- UNDEF.  Printing both values here
++             * says whether that is what is happening.
++             */
++            fprintf(stderr, "hv-tick: calls=%" PRIu64 " virt=%.3fs "
++                    "vctl=%" PRIu64 " vcval=%" PRIu64
++                    " delta=%" PRId64 "(%.3fs) cntvoff_el2=%" PRIu64
++                    " engine_cntvoff=%" PRIu64 " guest_reads=%" PRIu64 "\n",
++                    calls, (double)now_ns / 1e9,
++                    vctl, vcval, d,
++                    freq ? (double)d / (double)freq : 0.0,
++                    env->cp15.cntvoff_el2,
++                    (uint64_t)0,   /* 引擎侧恒 0：sysreg.c 无任何赋值 */
++                    now_guest);
++            last_print_ns = now_ns;
++        }
++    }
 +
 +    for (t = 0; t < 2; t++) {
 +        int idx = t == 0 ? GTIMER_VIRT : GTIMER_PHYS;
@@ -12236,10 +12198,10 @@ index 0000000000..1da170f334
 +}
 diff --git a/accel/henge/henge-engine.c b/accel/henge/henge-engine.c
 new file mode 100644
-index 0000000000..32d0d71f90
+index 0000000000..624593d268
 --- /dev/null
 +++ b/accel/henge/henge-engine.c
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,818 @@
 +/*
 + * Henge accelerator: the engine-side half of the bridge
 + *
@@ -12274,7 +12236,6 @@ index 0000000000..32d0d71f90
 + */
 +
 +#include <errno.h>
-+#include <stdbool.h>   /* bool: this TU never sees QEMU's osdep.h */
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
@@ -12845,57 +12806,7 @@ index 0000000000..32d0d71f90
 +    __atomic_store_n(&m->timer_epoch, epoch, __ATOMIC_RELEASE);
 +}
 +
-+/*
-+ * The host's half of the virtual-timer handoff.
-+ *
-+ * The engine owns CNTV_CTL/CNTV_CVAL and handles them without a seam, which is
-+ * right for the guest -- a raw timer read sits in cache-maintenance and
-+ * scheduler paths, and routing it through the BQL would be worse than the
-+ * problem this fixes.  But the host owns the interrupt controller, and it can
-+ * only raise a PPI for a timer it knows about.  Without this handoff QEMU's
-+ * timer is never armed, so nothing ever expires, so no PPI is ever raised, so
-+ * a guest sitting in WFI waits for an interrupt that was programmed in its own
-+ * register file but never reached the GIC.
-+ *
-+ * Measured before the fix: 8192 WFI sleeps in one window, each hitting the
-+ * 10 ms safety cap, ~82 seconds of a 96-second stall; and zero IRQ line
-+ * transitions over the whole run.
-+ *
-+ * Called from the tick callback, which already runs on the vCPU thread that
-+ * owns this HvCpu -- both on every CNTV write and at the top of every WFI --
-+ * so the flag needs no locking, only a compiler-visible store.
-+ */
-+bool hv_engine_take_vtimer(HvMachine *m, uint32_t index,
-+                           uint32_t *ctl, uint64_t *cval)
-+{
-+    HvCpu *cpu = (m && index < HV_MAX_CPUS) ? m->cpus[index] : NULL;
 +
-+    if (!cpu || !cpu->virt_timer_dirty) {
-+        return false;
-+    }
-+    *ctl = (uint32_t)cpu->cntv_ctl;
-+    *cval = cpu->cntv_cval;
-+    cpu->virt_timer_dirty = 0;
-+    return true;
-+}
-+
-+bool hv_engine_peek_vtimer(HvMachine *m, uint32_t index,
-+                           uint32_t *ctl, uint64_t *cval)
-+{
-+    HvCpu *cpu = (m && index < HV_MAX_CPUS) ? m->cpus[index] : NULL;
-+
-+    if (!cpu) {
-+        return false;
-+    }
-+    /* Never programmed: let the caller keep its own default rather than
-+       reporting a timer that is disabled by construction. */
-+    if (!cpu->cntv_ctl && !cpu->cntv_cval) {
-+        return false;
-+    }
-+    *ctl = (uint32_t)cpu->cntv_ctl;
-+    *cval = cpu->cntv_cval;
-+    return true;
-+}
 +
 +/* ------------------------------------------------------------------ */
 +/* Interrupt lines                                                     */
@@ -13406,10 +13317,10 @@ index 0000000000..00c2ba78bf
 +#endif /* SYSTEM_HENGE_ACCEL_H */
 diff --git a/include/system/henge-engine.h b/include/system/henge-engine.h
 new file mode 100644
-index 0000000000..44810b5da5
+index 0000000000..9ec0c5cd58
 --- /dev/null
 +++ b/include/system/henge-engine.h
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,303 @@
 +/*
 + * Contract between the Henge accelerator and the engine
 + *
@@ -13621,44 +13532,7 @@ index 0000000000..44810b5da5
 +uint64_t hv_engine_timer_ticks(HvMachine *m);
 +void hv_engine_set_timer_epoch(HvMachine *m, uint64_t epoch);
 +
-+/*
-+ * Take a copy of this CPU's virtual-timer registers, if they changed since the
-+ * last call.
-+ *
-+ * The engine owns CNTV_CTL/CNTV_CVAL: it handles them inline and never lets
-+ * them reach the host through a seam, because a raw timer read sits in the
-+ * guest's cache-maintenance and scheduler paths.  That is correct for the
-+ * guest, but it means a host that owns the interrupt controller never learns
-+ * the timer was programmed -- its own timer device stays unarmed, no PPI is
-+ * raised, and the guest waits in WFI for an interrupt that cannot arrive.
-+ *
-+ * So after every WFI decision and every CNTV write (both already route through
-+ * the tick callback) the host calls this and, if it returns true, pushes the
-+ * values into its own timer model.  The flag is cleared here, so an idle vCPU
-+ * that sleeps a thousand times with an unchanged timer pays one atomic test
-+ * per sleep.
-+ *
-+ * Returns true only when the values were re-taken; *ctl and *cval are then
-+ * valid and are in the guest tick domain (no epoch applied -- see
-+ * hv_engine_set_timer_epoch()).
-+ */
-+bool hv_engine_take_vtimer(HvMachine *m, uint32_t index,
-+                           uint32_t *ctl, uint64_t *cval);
 +
-+/*
-+ * Same values as take_vtimer(), but leaves the dirty flag alone.
-+ *
-+ * This is the one to use from the WFI path.  That path runs *inside* hv_run,
-+ * which the vCPU thread enters after bql_unlock() -- so it must not touch any
-+ * QEMU device state, and pushing into QEMU's timer from there was a lock-order
-+ * violation (gt_recalc_timer manipulates QEMUTimer and the GIC irq line).
-+ * Reading the engine's own registers needs no lock at all.
-+ *
-+ * Returns false only if the CPU has never programmed its virtual timer, in
-+ * which case the caller keeps its existing fallback.
-+ */
-+bool hv_engine_peek_vtimer(HvMachine *m, uint32_t index,
-+                           uint32_t *ctl, uint64_t *cval);
 +
 +/* ---- interrupt lines ----
 + *
@@ -14094,73 +13968,26 @@ index 787e4dc7ab..b9dbcd2a66 100644
          }
      }
 diff --git a/target/arm/helper.c b/target/arm/helper.c
-index 4ed91ac85a..5661f78519 100644
+index 4ed91ac85a..77740c3601 100644
 --- a/target/arm/helper.c
 +++ b/target/arm/helper.c
-@@ -1569,6 +1569,34 @@ static void gt_timer_reset(CPUARMState *env, const ARMCPRegInfo *ri,
+@@ -1569,6 +1569,7 @@ static void gt_timer_reset(CPUARMState *env, const ARMCPRegInfo *ri,
      timer_del(cpu->gt_timer[timeridx]);
  }
  
-+/*
-+ * Accelerator-owned virtual timer -> QEMU's timer device.
-+ *
-+ * henge keeps CNTV_CTL/CNTV_CVAL in its own HvCpu (see
-+ * engine/core/sysreg.c) and never routes those accesses through QEMU's cpreg
-+ * table, so QEMU's copy of the state stays zero forever unless someone pushes
-+ * it.  This is that push.
-+ *
-+ * Deliberately GTIMER_VIRT only.  The physical timer's ownership is not yet
-+ * decided in the port, and silently writing both would mask that question.
-+ *
-+ * Deliberately no epoch conversion: henge_timer_calibrate() guarantees
-+ * (engine_ticks - epoch) == qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) in guest
-+ * ticks, so the cval arrives already comparable with gt_get_countervalue().
-+ * Converting again here would double-apply the offset.
-+ *
-+ * Called with the BQL held (from the vCPU thread's tick callback).
-+ */
-+void arm_henge_set_vtimer(CPUState *cs, uint32_t ctl, uint64_t cval)
-+{
-+    ARMCPU *cpu = ARM_CPU(cs);
-+    ARMGenericTimer *gt = &cpu->env.cp15.c14_timer[GTIMER_VIRT];
-+
-+    gt->ctl = ctl & 3;      /* ENABLE | IMASK; ISTATUS is derived by recalc */
-+    gt->cval = cval;
-+    gt_recalc_timer(cpu, GTIMER_VIRT);
-+}
 +
  static uint64_t gt_cnt_read(CPUARMState *env, const ARMCPRegInfo *ri)
  {
      uint64_t offset = gt_direct_access_timer_offset(env, GTIMER_PHYS);
 diff --git a/target/arm/internals.h b/target/arm/internals.h
-index 4026f67579..594c32bcaa 100644
+index 4026f67579..e5a02a94a5 100644
 --- a/target/arm/internals.h
 +++ b/target/arm/internals.h
-@@ -1982,6 +1982,28 @@ int delete_gdbstub_hw_watchpoint(vaddr addr, vaddr len, GdbBreakpointType type);
+@@ -1982,6 +1982,8 @@ int delete_gdbstub_hw_watchpoint(vaddr addr, vaddr len, GdbBreakpointType type);
  
  /* Return the current value of the system counter in ticks */
  uint64_t gt_get_countervalue(CPUARMState *env);
 +
-+/*
-+ * Push an externally-maintained virtual-timer state into QEMU and re-arm it.
-+ *
-+ * Why this exists: an accelerator that owns the guest's generic-timer registers
-+ * (henge does: it handles CNTV_CTL/CNTV_CVAL/CNTV_TVAL inline and never lets
-+ * them reach QEMU) has to tell QEMU's timer device about them, or two things
-+ * break at once:
-+ *
-+ *   - The timer is never armed, so it never expires, so no PPI is ever raised.
-+ *     The guest waits in WFI for an interrupt that was programmed in its own
-+ *     register file but never reached the interrupt controller.
-+ *   - Anything that asks QEMU how long until the next expiry (henge's WFI
-+ *     deadline) reads a cval of zero and concludes "nothing armed".
-+ *
-+ * The epoch contract makes this safe: henge_timer_calibrate() keeps
-+ * (engine_ticks - epoch) equal to QEMU's own virtual-clock ticks, so a cval
-+ * expressed in the engine's guest domain is directly comparable against
-+ * gt_get_countervalue() here.  No conversion is done in this function.
-+ */
-+void arm_henge_set_vtimer(CPUState *cs, uint32_t ctl, uint64_t cval);
 +
  /*
   * Return the currently applicable offset between the system counter
