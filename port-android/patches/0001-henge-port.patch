@@ -980,10 +980,10 @@ index 0000000000..a73da9a5c9
 +#endif
 diff --git a/accel/henge/engine/core/dispatch.c b/accel/henge/engine/core/dispatch.c
 new file mode 100644
-index 0000000000..d15bedffea
+index 0000000000..139bd63e17
 --- /dev/null
 +++ b/accel/henge/engine/core/dispatch.c
-@@ -0,0 +1,1267 @@
+@@ -0,0 +1,1255 @@
 +#include "dispatch.h"
 +
 +#include <mach/mach.h>
@@ -1128,60 +1128,47 @@ index 0000000000..d15bedffea
 +    __typeof__(cpu->pc_state->jc[0]) *jc = cpu->pc_state->jc;
 +    HvBlock *c = jc[j].va == va ? jc[j].b : NULL;
 +    /*
-+     * 第三道判据：这个 block 所属的窗口还在不在。
++     * Two tests read the same invariant -- "the window this block was
++     * translated from is still the window at this pa" -- and both must come
++     * before page_gen[] is dereferenced, because in a retired slot that array
++     * is NULL.
 +     *
-+     * del_ram 会把 size 置 0、page_gen 置 NULL 而不动 epoch（epoch 只在
-+     * add_ram 里 ++）。所以"槽位已退役、还没被下一个占用者接管"这个窗口里，
-+     * 下面两行的 page_gen[c->pg] 是 NULL[...]，命中过一次就是一次 NULL 解引用。
-+     * 这才是 13.28 想描述的东西，只是它把原因写成了"代际混叠"；
-+     * 实测（13.35）复用时 live_blocks=0，混叠不成立，退役窗口才是要测的那个。
++     *   c->ram->size != 0        structural: del_ram() zeroes size
++     *   ram_epoch == ram->epoch  the counter add_ram() and del_ram() bump
++     *
++     * The second alone would have been enough while both bump; the first is
++     * what keeps working if one of them ever stops.  That redundancy is the
++     * point, not an oversight -- see the note on HvRam.epoch.
++     *
++     * (What this is NOT: a guard against two occupancy generations sharing a
++     * slot.  That was the original hypothesis behind "P0-a", and 13.35 killed
++     * its premise -- 4 reuses per boot, every one with zero live blocks.  What
++     * remains is the retired window, which is real.)
 +     */
-+    if (c && !c->ram->size) {
++    if (c && c->pa == pa && c->flags == flags && c->ram->size == 0) {
 +        m->stats.retired_hit++;
 +        if (m->stats.retired_hit <= 20 || m->stats.retired_hit % 100 == 0) {
-+            fprintf(stderr, "henge-p0a: RETIRED-hit #%llu va=%llx pa=%llx "
-+                    "block_pa=%llx (窗口已退役，page_gen=%p)\n",
++            fprintf(stderr, "henge: RETIRED-window #%llu va=%llx pa=%llx "
++                    "block_pa=%llx (page_gen=%p)\n",
 +                    (unsigned long long)m->stats.retired_hit,
 +                    (unsigned long long)va, (unsigned long long)pa,
 +                    (unsigned long long)c->pa, (void *)c->ram->page_gen);
 +        }
 +    }
-+    if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
-+        c->ram->page_gen[c->pg] == c->gen) return c;
++    if (c && c->pa == pa && c->flags == flags && c->ram->size &&
++        c->ram_epoch == c->ram->epoch && c->ram->page_gen[c->pg] == c->gen) return c;
 +    if (c && c->pa == pa && c->flags == flags && c->ram_epoch != c->ram->epoch) {
-+        /*
-+         * P0-a 的正面证据：如果不看 ram_epoch，上面那个 if 就会命中一个
-+         * 按**已消失的 host 内存**翻译出来的 block，然后跳进去执行。
-+         *
-+         * 即时打印而不是攒到退出：QEMU 在 henge 下没有 accel cleanup 钩子，
-+         * hv_machine_free() 从不被调用 —— 攒着就永远看不到。
-+         *
-+         * 不再套 getenv：13.34 那轮"零命中"就是因为这里挂了 HV_P0A_STATS，
-+         * 而那个变量在脚本、文档、设备环境里都不存在 —— 命中也不会出声。
-+         * 命中本身就是稀有事件，前 20 次全打，之后每 100 次打一次。
-+         */
++        /* The window moved on under a block that was translated from it.  The
++           fast path above refuses it; count how often that refusal mattered. */
 +        m->stats.epoch_stale++;
 +        if (c->ram->epoch - c->ram_epoch > m->stats.epoch_high_water)
 +            m->stats.epoch_high_water = c->ram->epoch - c->ram_epoch;
-+        if (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0) {
-+            fprintf(stderr, "henge-p0a: STALE-hit #%llu va=%llx pa=%llx "
-+                    "block_epoch=%u ram_epoch=%u (delta %u)\n",
-+                    (unsigned long long)m->stats.epoch_stale,
-+                    (unsigned long long)va, (unsigned long long)pa,
-+                    c->ram_epoch, c->ram->epoch, c->ram->epoch - c->ram_epoch);
-+        }
 +    }
 +    uint32_t h = hash_of(va, pa, flags);
 +    HvRam *ram = hv_ram_lookup(m, pa);
 +    uint64_t pg = (pa - ram->pa) >> HV_TLB_PAGE_BITS;
 +    uint32_t gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
-+    uint64_t stale0 = m->stats.epoch_stale;   /* P0-a: hv_block_find 里的混叠计数 */
 +    HvBlock *b = find(m, h, va, pa, flags, gen);
-+    if (m->stats.epoch_stale != stale0 && m->stats.epoch_stale <= 20)
-+        fprintf(stderr, "henge-p0a: STALE-find #%llu va=%llx pa=%llx "
-+                "(这条路径旧代码会返回一个按已消失 host 内存翻译的 block)\n",
-+                (unsigned long long)m->stats.epoch_stale,
-+                (unsigned long long)va, (unsigned long long)pa);
 +    if (b) {
 +        jc[j].va = va, jc[j].b = b;
 +        return b;
@@ -1794,20 +1781,25 @@ index 0000000000..d15bedffea
 +        fprintf(stderr, "  code-page protects/s: none %.0f, one entry %.0f, whole-TLB scans %.0f\n", RATE(protect_kind[0]),
 +                RATE(protect_kind[1]), RATE(protect_kind[2]));
 +        /*
-+         * P0-a 的直接判据。这三个数是累积值，不是速率 —— 判"是否发生过"，
-+         * 不是判"多频繁"。
++         * Slot-identity counters, accumulated not rates -- they answer "did
++         * this ever happen", not "how often".
 +         *
-+         *   ram_reuse    > 0  槽位复用发生过（带盘 boot 必然几百次）
-+         *   epoch_stale  = 0  **旧代码不会误判任何一个 block** ——
-+         *                     说明 P0-a 的混叠路径在这轮里从未被走到
-+         *   epoch_stale  > 0  走到过 N 次；旧代码会跳进 N 个按已消失的
-+         *                     host 内存翻译出来的 block。崩不崩取决于
-+         *                     QEMU 是否恰好复用了同一 host 映射。
-+         *
-+         * 这条比 SIGSEGV 可靠：SIGSEGV 是彩票，这是命中计数。
++         *   ram_reuse    how often add_ram recycled a retired slot.  Measured
++         *                at 4 per boot on a disk boot (13.35), all before the
++         *                first vCPU existed.  NOT the same as del_ram calls:
++         *                a del against a never-mirrored window retires nothing.
++         *   retired_hit  a block was looked up while its window was retired
++         *                (size == 0, page_gen == NULL).  This is the one that
++         *                would have been a NULL dereference: it is the only
++         *                observer of the del-epoch fix, which is otherwise
++         *                correct by construction and invisible.
++         *   epoch_stale  a block's recorded occupancy generation no longer
++         *                matched its window's.
++         *   epoch_high_water  largest generation gap seen.
 +         */
-+        fprintf(stderr, "  P0-a: ram_reuse %llu, epoch_stale %llu, epoch_high_water %llu\n",
++        fprintf(stderr, "  slots: ram_reuse %llu, retired_hit %llu, epoch_stale %llu, epoch_high_water %llu\n",
 +                (unsigned long long)m->stats.ram_reuse,
++                (unsigned long long)m->stats.retired_hit,
 +                (unsigned long long)m->stats.epoch_stale,
 +                (unsigned long long)m->stats.epoch_high_water);
 +        fprintf(stderr, "  fast resume refused/s: state %.0f, exit request %.0f, interrupt %.0f, timer %.0f, not cached %.0f\n", RATE(fr_fail[0]),
@@ -1878,22 +1870,18 @@ index 0000000000..d15bedffea
 +        uint64_t host = (uint64_t)(uintptr_t)(b->ram->host + (page_pa - b->ram->pa));
 +        if (host - (b->va & ~((1ull << HV_TLB_PAGE_BITS) - 1)) != xa) return;
 +        pthread_mutex_lock(&m->tr_mu);
-+        if (b->ram_epoch != b->ram->epoch ||
++        if (b->ram->size == 0 ||
++            b->ram_epoch != b->ram->epoch ||
 +            __atomic_load_n(&b->ram->page_gen[b->pg], __ATOMIC_ACQUIRE) != b->gen ||
 +            m->slot_xpa[idx]) {
-+            /* 这里更严重：旧代码会把这个 slot 链到一个用旧 host 内存
-+               翻译出来的 block 上，然后真的跳过去。计一次。 */
++            /* Same invariant as the fast path, and it matters more here: a
++               chained exit jumps straight to b->code with no lookup in
++               between, so a stale target is a jump into code translated
++               against host memory the guest no longer owns. */
 +            if (b->ram_epoch != b->ram->epoch) {
 +                m->stats.epoch_stale++;
 +                if (b->ram->epoch - b->ram_epoch > m->stats.epoch_high_water)
 +                    m->stats.epoch_high_water = b->ram->epoch - b->ram_epoch;
-+                if (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0) {
-+                    fprintf(stderr, "henge-p0a: STALE-chain #%llu va=%llx "
-+                            "block_epoch=%u ram_epoch=%u\n",
-+                            (unsigned long long)m->stats.epoch_stale,
-+                            (unsigned long long)b->va,
-+                            b->ram_epoch, b->ram->epoch);
-+                }
 +            }
 +            pthread_mutex_unlock(&m->tr_mu);
 +            return;
@@ -2628,10 +2616,10 @@ index 0000000000..c5ecd95293
 +#endif
 diff --git a/accel/henge/engine/core/machine.c b/accel/henge/engine/core/machine.c
 new file mode 100644
-index 0000000000..ebbd591873
+index 0000000000..6bef34c0d1
 --- /dev/null
 +++ b/accel/henge/engine/core/machine.c
-@@ -0,0 +1,580 @@
+@@ -0,0 +1,559 @@
 +#include "machine.h"
 +
 +#include <mach/mach_time.h>
@@ -2938,38 +2926,7 @@ index 0000000000..ebbd591873
 +    for (i = 0; i < m->nram; i++) {
 +        if (!m->ram[i].host && !m->ram[i].size) {
 +            r = &m->ram[i];
-+            /*
-+             * P0-a 判据：这是"旧 block 可能与新 page_gen 混叠"的一次机会。
-+             *
-+             * 但"机会"要分开数：复用的是一个**只做数据**的窗口（变量存储）
-+             * 还是被取指过的窗口，决定这条路径能不能产生一个悬空 block。
-+             * 前 8 次打印出来，别只留一个计数 —— 上一轮就是只留计数，
-+             * 结果连"复用没复用"都判不了。
-+             */
 +            m->stats.ram_reuse++;
-+            if (m->stats.ram_reuse <= 8) {
-+                /*
-+                 * 真正的判据不是"复用了"，而是"复用时这个槽位里还有没有活着的
-+                 * block"。有一个，且 pa 还相同，才是旧代码会跳进去的那种悬空
-+                 * block。只数复用次数说明不了任何事 —— 复用一个从未取过指的
-+                 * 数据窗口，和复用一个取过指的代码窗口，是两件完全不同的事。
-+                 * 只在前 8 次做，扫整张 hash 的代价可以忽略。
-+                 */
-+                uint64_t live = 0;
-+                uint64_t prev_pa = r->pa;
-+
-+                for (uint32_t h = 0; h < HV_BLOCK_HASH; h++) {
-+                    for (HvBlock *b = m->hash[h]; b; b = b->next) {
-+                        if (b->ram == r) live++;
-+                    }
-+                }
-+                fprintf(stderr, "henge-p0a: REUSE #%llu slot=%d pa=%llx size=%llx "
-+                        "readonly=%d old_epoch=%u -> %u prev_pa=%llx live_blocks=%llu\n",
-+                        (unsigned long long)m->stats.ram_reuse, i,
-+                        (unsigned long long)pa, (unsigned long long)size,
-+                        readonly, r->epoch, r->epoch + 1,
-+                        (unsigned long long)prev_pa, (unsigned long long)live);
-+            }
 +            break;
 +        }
 +    }
@@ -2981,9 +2938,19 @@ index 0000000000..ebbd591873
 +    r->size = size;
 +    r->host = host;
 +    r->readonly = readonly;
-+    /* Before the arrays are replaced: blocks from whoever last held this slot
-+       must stop matching, and their page_gen/gen pair will match again once
-+       page_gen is a fresh zeroed array.  See HvRam.epoch. */
++    /*
++     * Read this before the arrays are replaced, and read it as "which
++     * occupancy of this slot is this".  Every block made from the previous
++     * occupant still points at this same HvRam (slots are reused in place, so
++     * the address is stable) and will stop matching on ram_epoch.  Without
++     * that, page_gen being a fresh zeroed array is enough for the page_gen
++     * test to call a stale block valid again.
++     *
++     * hv_machine_del_ram_flags() bumps it too, for the window in between; see
++     * the note there.  Both bumps are load-bearing and neither is redundant
++     * with the size test: size says "retired", epoch says "different
++     * occupant", and a block must be refused in both cases.
++     */
 +    r->epoch++;
 +    size_t pages = (size + (1u << HV_TLB_PAGE_BITS) - 1) >> HV_TLB_PAGE_BITS;
 +    r->pages_log2 = 0;
@@ -3214,10 +3181,10 @@ index 0000000000..ebbd591873
 +}
 diff --git a/accel/henge/engine/core/machine.h b/accel/henge/engine/core/machine.h
 new file mode 100644
-index 0000000000..5ddd7a1739
+index 0000000000..56d897c4a1
 --- /dev/null
 +++ b/accel/henge/engine/core/machine.h
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,477 @@
 +#ifndef HENGEVM_MACHINE_H
 +#define HENGEVM_MACHINE_H
 +
@@ -3237,12 +3204,19 @@ index 0000000000..5ddd7a1739
 +    uint8_t *code_pages; /* one byte per 16 KB page: a translated block came from here (2^pages_log2 of them) */
 +    uint32_t pages_log2;
 +    uint32_t *page_gen;  /* per page: bumped to invalidate the blocks translated from it */
-+    /* Bumped by every add_ram().  A retired slot is reused with a fresh
-+       page_gen full of zeros, and the blocks made from the previous occupant
-+       hold gen == 0 too (that is what a page's generation starts at), so the
-+       page_gen check alone would call them valid and run code translated
-+       against memory nobody owns any more.  Blocks remember this epoch as
-+       well, which no reuse can reproduce. */
++    /* Identifies this slot's current occupancy.  Bumped by add_ram() *and* by
++       del_ram(), which is what makes it worth having.
++
++       add_ram() alone would only distinguish two occupants after the fact.  The
++       gap in the middle is the dangerous one: between the del and the next add
++       the slot is retired -- size 0, page_gen NULL -- while pa, flags and
++       epoch all still match whatever was there before, so a block translated
++       from the vanished window passes every other test and then reads
++       page_gen[pg], i.e. NULL[pg].  That is a host SIGSEGV, not a wrong guest
++       read.  Bumping on the way out closes the window instead of documenting
++       it.
++
++       Blocks remember this as ram_epoch; see hv_block_find(). */
 +    uint32_t epoch;
 +    /* Per page and CPU: up to three TLB entries (slot << 2 | table, plus 1;
 +       16 bits each) that mapped the page writable, or HV_WHINT_MANY when there
@@ -3266,7 +3240,7 @@ index 0000000000..5ddd7a1739
 +    uint32_t flags;      /* HV_BLOCK_* state the translation depends on */
 +    uint32_t ninsns;
 +    uint32_t gen;        /* page_gen of its page when translated */
-+    uint32_t ram_epoch;  /* ram->epoch when translated: tells a reused slot from the old one */
++    uint32_t ram_epoch;  /* ram->epoch when translated: which occupancy of the slot this is */
 +    struct HvRam *ram;   /* where its page lives, for a quick staleness check */
 +    uint64_t pg;
 +    uint32_t *code;
@@ -3290,25 +3264,28 @@ index 0000000000..5ddd7a1739
 +/* Counters for --stats: where the time goes. */
 +typedef struct HvStats {
 +    uint64_t blocks, translations, block_flushes;
-+    /* P0-a 的三个直接判据（比 SIGSEGV 彩票可靠得多）。
++    /* Slot-identity counters.  Accumulated, not rates: they answer "did this
++     * ever happen", which is the only question that matters for a fault path
++     * that is either impossible or fatal.
 +     *
-+     * ram_reuse：add_ram 复用一个退役槽位的次数 —— 这才是"代际混叠"的
-+     *   机会数。注意它**不等于** del 次数：del 打在从未镜像过的窗口上会
-+     *   返回 -1，什么都不退役。实测（13.35，vivo 带盘 boot）：
-+     *   del 704 次 / 真正复用 **4** 次 / 且 4 次全在 vCPU 起来之前。
-+     * epoch_stale：某个 block 因为 ram_epoch 与 ram->epoch 不符被判失效的次数。
-+     *   **这正是旧代码会误判为"有效"并跳进去执行的次数。**
-+     * epoch_high_water：见过的最老 epoch 与新 epoch 的最大差。
++     *   ram_reuse    add_ram() recycled a retired slot.  Not the same as
++     *                del_ram calls -- a del against a never-mirrored window
++     *                retires nothing, and on a disk boot that is 698 of 704.
++     *                Measured baseline (13.35, disk boot): 5 hits, 704 calls,
++     *                4 reuses, all before the first vCPU.
++     *   retired_hit  a block was looked up while its window was retired
++     *                (size 0, page_gen NULL).  This is the NULL-dereference
++     *                path: it is the only observer the del-epoch bump has,
++     *                since that fix is correct by construction and otherwise
++     *                produces no visible change.
++     *   epoch_stale  a block's occupancy generation no longer matched.
++     *   epoch_high_water  largest generation gap seen.
 +     *
-+     * del_hit / del_miss：del_ram 命中镜像窗口（rc==0）与没命中（rc==-1）
-+     *   的次数。这两个数是"704 次 del 为什么只换来 4 次复用"的直接答案，
-+     *   不需要再从 never-mirror 列表去推断。 */
++     * del_hit / del_miss: del_ram found a live mirrored window (0) or not
++     * (-1).  Together with ram_reuse these settle "why did 704 dels retire
++     * only 4 slots" without reasoning about the never-mirror list. */
 +    uint64_t ram_reuse, epoch_stale, epoch_high_water;
 +    uint64_t del_hit, del_miss;
-+    /* retired_hit：快路径/慢路径拿到一个 block，而它所属的窗口已经被
-+     *   del_ram 退役（size==0，page_gen==NULL）的次数。这才是"按已消失的
-+     *   host 内存翻译出来的 block"的直接判据 —— 而且比 epoch_stale 更早，
-+     *   因为 epoch 在 del 时不动。 */
 +    uint64_t retired_hit;
 +    uint64_t flush_smc, flush_ic, flush_full;  /* why translations were dropped */
 +    uint64_t chained, ijc_fills, ijc_resets;
@@ -3589,19 +3566,23 @@ index 0000000000..5ddd7a1739
 +    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE)) {
 +        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) {
 +            /*
-+             * ★ P0-a 的真正判据，就在这里。
++             * The generation test above is per page and cannot tell one
++             * occupancy of a RAM slot from the next: page_gen is freed and
++             * reallocated by add_ram() and starts at zero again, so a block
++             * made from the previous occupant matches whenever its own gen was
++             * 0.  b->ram points at the same HvRam either way, because slots are
++             * reused in place, so nothing else in this comparison notices.
 +             *
-+             * 这是**主查找路径**（dispatch.c 的 lookup 两次都走它），
-+             * 而 b->gen == gen 只看页级代际。一个 RAM 槽位被 del_ram
-+             * 回收、又被 add_ram 复用时，page_gen 是**全新的全 0 数组**，
-+             * 而旧 block 若是该 region 第一批翻译出来的，b->gen 也是 0
-+             * —— 两者相等，这个 if 就会返回一个按**已消失的 host 内存**
-+             * 翻译出来的 block。
++             * ram_epoch does, and it is the last check available here -- any
++             * block that gets past it is returned to the dispatcher, which
++             * jumps straight into code translated against memory the guest may
++             * no longer own.
 +             *
-+             * ram_epoch 是 region 级单调计数器，calloc 清不掉它，
-+             * 所以它能把"同一个槽位的两个不同占位者"区分开。
-+             *
-+             * 计数 + 返回 NULL：等价于把这条混叠路径封死，同时留痕。
++             * (Scope, so nobody re-derives the wrong lesson: 13.35 measured
++             * 4 reuses per disk boot with zero live blocks on the slot each
++             * time, so this particular aliasing has never been observed.  The
++             * retired-window case is the one with a real NULL in it, and it is
++             * covered by the same counter plus the size test in lookup().)
 +             */
 +            if (b->ram_epoch != b->ram->epoch) {
 +                m->stats.epoch_stale++;
@@ -3609,9 +3590,8 @@ index 0000000000..5ddd7a1739
 +                    uint32_t d = b->ram->epoch - b->ram_epoch;
 +                    if (d > m->stats.epoch_high_water) m->stats.epoch_high_water = d;
 +                }
-+                /* 只计数，不打印：这个头文件里没有 stdio。
-+                   打印由 dispatch.c 的调用点在计数变化时做。 */
-+                return NULL;   /* 不返回这个 block：它属于上一个占位者 */
++                /* Counted only; this header has no stdio. */
++                return NULL;
 +            }
 +            return b;
 +        }
@@ -9468,12 +9448,12 @@ index 0000000000..091a7bfc98
 +void hv_jit_reset(HvJitRegion *region) { region->used = 0; }
 diff --git a/accel/henge/engine/local-edits.patch b/accel/henge/engine/local-edits.patch
 new file mode 100644
-index 0000000000..eb8c7b40d2
+index 0000000000..0ee529ab9a
 --- /dev/null
 +++ b/accel/henge/engine/local-edits.patch
-@@ -0,0 +1,809 @@
-+--- a/core/cpu.h	2026-11-17 17:58:03.779087810 +0800
-++++ b/core/cpu.h	2026-11-17 17:58:03.785884994 +0800
+@@ -0,0 +1,784 @@
++--- a/core/cpu.h	2026-11-17 18:12:23.408882608 +0800
+++++ b/core/cpu.h	2026-11-17 18:12:23.416205048 +0800
 +@@ -274,6 +274,11 @@
 +     HV_EXIT_HALT,        /* PSCI off, or a test asked to stop */
 +     HV_EXIT_FLUSH,       /* translated code was invalidated (IC, self-modifying code) */
@@ -9486,8 +9466,8 @@ index 0000000000..eb8c7b40d2
 + };
 + 
 + /* PSTATE bits as laid out in SPSR. */
-+--- a/core/dispatch.c	2026-11-17 17:58:03.779601366 +0800
-++++ b/core/dispatch.c	2026-11-17 17:58:03.785334979 +0800
++--- a/core/dispatch.c	2026-11-17 18:12:23.409343624 +0800
+++++ b/core/dispatch.c	2026-11-17 18:12:23.414894304 +0800
 +@@ -17,10 +17,28 @@
 + 
 + void hv_flush_blocks(HvMachine *m) {
@@ -9518,70 +9498,52 @@ index 0000000000..eb8c7b40d2
 +     }
 +     m->stats.block_flushes++;
 +     __atomic_add_fetch(&m->jit_gen, 1, __ATOMIC_SEQ_CST);
-+@@ -123,12 +141,61 @@
++@@ -123,7 +141,43 @@
 +     uint32_t j = (uint32_t)((va >> 2) ^ (va >> 18) ^ ((uint64_t)flags << 13)) & ((1u << HV_JC_BITS) - 1);
 +     __typeof__(cpu->pc_state->jc[0]) *jc = cpu->pc_state->jc;
 +     HvBlock *c = jc[j].va == va ? jc[j].b : NULL;
 +-    if (c && c->pa == pa && c->flags == flags && c->ram->page_gen[c->pg] == c->gen) return c;
 ++    /*
-++     * 第三道判据：这个 block 所属的窗口还在不在。
+++     * Two tests read the same invariant -- "the window this block was
+++     * translated from is still the window at this pa" -- and both must come
+++     * before page_gen[] is dereferenced, because in a retired slot that array
+++     * is NULL.
 ++     *
-++     * del_ram 会把 size 置 0、page_gen 置 NULL 而不动 epoch（epoch 只在
-++     * add_ram 里 ++）。所以"槽位已退役、还没被下一个占用者接管"这个窗口里，
-++     * 下面两行的 page_gen[c->pg] 是 NULL[...]，命中过一次就是一次 NULL 解引用。
-++     * 这才是 13.28 想描述的东西，只是它把原因写成了"代际混叠"；
-++     * 实测（13.35）复用时 live_blocks=0，混叠不成立，退役窗口才是要测的那个。
+++     *   c->ram->size != 0        structural: del_ram() zeroes size
+++     *   ram_epoch == ram->epoch  the counter add_ram() and del_ram() bump
+++     *
+++     * The second alone would have been enough while both bump; the first is
+++     * what keeps working if one of them ever stops.  That redundancy is the
+++     * point, not an oversight -- see the note on HvRam.epoch.
+++     *
+++     * (What this is NOT: a guard against two occupancy generations sharing a
+++     * slot.  That was the original hypothesis behind "P0-a", and 13.35 killed
+++     * its premise -- 4 reuses per boot, every one with zero live blocks.  What
+++     * remains is the retired window, which is real.)
 ++     */
-++    if (c && !c->ram->size) {
+++    if (c && c->pa == pa && c->flags == flags && c->ram->size == 0) {
 ++        m->stats.retired_hit++;
 ++        if (m->stats.retired_hit <= 20 || m->stats.retired_hit % 100 == 0) {
-++            fprintf(stderr, "henge-p0a: RETIRED-hit #%llu va=%llx pa=%llx "
-++                    "block_pa=%llx (窗口已退役，page_gen=%p)\n",
+++            fprintf(stderr, "henge: RETIRED-window #%llu va=%llx pa=%llx "
+++                    "block_pa=%llx (page_gen=%p)\n",
 ++                    (unsigned long long)m->stats.retired_hit,
 ++                    (unsigned long long)va, (unsigned long long)pa,
 ++                    (unsigned long long)c->pa, (void *)c->ram->page_gen);
 ++        }
 ++    }
-++    if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
-++        c->ram->page_gen[c->pg] == c->gen) return c;
+++    if (c && c->pa == pa && c->flags == flags && c->ram->size &&
+++        c->ram_epoch == c->ram->epoch && c->ram->page_gen[c->pg] == c->gen) return c;
 ++    if (c && c->pa == pa && c->flags == flags && c->ram_epoch != c->ram->epoch) {
-++        /*
-++         * P0-a 的正面证据：如果不看 ram_epoch，上面那个 if 就会命中一个
-++         * 按**已消失的 host 内存**翻译出来的 block，然后跳进去执行。
-++         *
-++         * 即时打印而不是攒到退出：QEMU 在 henge 下没有 accel cleanup 钩子，
-++         * hv_machine_free() 从不被调用 —— 攒着就永远看不到。
-++         *
-++         * 不再套 getenv：13.34 那轮"零命中"就是因为这里挂了 HV_P0A_STATS，
-++         * 而那个变量在脚本、文档、设备环境里都不存在 —— 命中也不会出声。
-++         * 命中本身就是稀有事件，前 20 次全打，之后每 100 次打一次。
-++         */
+++        /* The window moved on under a block that was translated from it.  The
+++           fast path above refuses it; count how often that refusal mattered. */
 ++        m->stats.epoch_stale++;
 ++        if (c->ram->epoch - c->ram_epoch > m->stats.epoch_high_water)
 ++            m->stats.epoch_high_water = c->ram->epoch - c->ram_epoch;
-++        if (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0) {
-++            fprintf(stderr, "henge-p0a: STALE-hit #%llu va=%llx pa=%llx "
-++                    "block_epoch=%u ram_epoch=%u (delta %u)\n",
-++                    (unsigned long long)m->stats.epoch_stale,
-++                    (unsigned long long)va, (unsigned long long)pa,
-++                    c->ram_epoch, c->ram->epoch, c->ram->epoch - c->ram_epoch);
-++        }
 ++    }
 +     uint32_t h = hash_of(va, pa, flags);
 +     HvRam *ram = hv_ram_lookup(m, pa);
 +     uint64_t pg = (pa - ram->pa) >> HV_TLB_PAGE_BITS;
-+     uint32_t gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
-++    uint64_t stale0 = m->stats.epoch_stale;   /* P0-a: hv_block_find 里的混叠计数 */
-+     HvBlock *b = find(m, h, va, pa, flags, gen);
-++    if (m->stats.epoch_stale != stale0 && m->stats.epoch_stale <= 20)
-++        fprintf(stderr, "henge-p0a: STALE-find #%llu va=%llx pa=%llx "
-++                "(这条路径旧代码会返回一个按已消失 host 内存翻译的 block)\n",
-++                (unsigned long long)m->stats.epoch_stale,
-++                (unsigned long long)va, (unsigned long long)pa);
-+     if (b) {
-+         jc[j].va = va, jc[j].b = b;
-+         return b;
-+@@ -147,7 +214,7 @@
++@@ -147,7 +201,7 @@
 +         gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
 +     }
 +     /* Translate without the lock, into this thread's buffer... */
@@ -9590,7 +9552,7 @@ index 0000000000..eb8c7b40d2
 +     uint64_t t0 = m->stats_interval ? mach_absolute_time() : 0;
 +     if (hv_translate_emit(m, &nb, code, avail) != 0) goto flush_unlocked;
 +     if (m->stats_interval) {
-+@@ -199,7 +266,8 @@
++@@ -199,7 +253,8 @@
 +     m->nblocks++;
 +     for (HvBlock **pp = &m->hash[h]; *pp;) {
 +         HvBlock *cur = *pp;
@@ -9600,7 +9562,7 @@ index 0000000000..eb8c7b40d2
 +             __atomic_store_n(pp, cur->next, __ATOMIC_RELEASE);
 +         else
 +             pp = &cur->next;
-+@@ -449,12 +517,66 @@
++@@ -449,12 +504,66 @@
 + /* WFI: sleep until an interrupt is pending (masked or not) or the next timer
 +    event, at most 10 ms. WFI may complete early, so the guest just runs again
 +    if nothing happened. */
@@ -9669,7 +9631,7 @@ index 0000000000..eb8c7b40d2
 +     uint64_t now = mach_absolute_time();
 +     uint64_t wait_ticks = deadline && deadline > now ? deadline - now : 240000; /* the counter runs at 24 MHz */
 +     if (wait_ticks > 240000) wait_ticks = 240000;
-+@@ -639,7 +761,7 @@
++@@ -639,7 +748,7 @@
 +                 uint64_t len = 0;
 +                 for (HvBlock *b = m->hash[h]; b; b = b->next) {
 +                     len++;
@@ -9678,57 +9640,58 @@ index 0000000000..eb8c7b40d2
 +                 }
 +                 if (len) used++;
 +                 sumsq += len * len;
-+@@ -685,6 +807,23 @@
++@@ -685,6 +794,28 @@
 +         fprintf(stderr, "  user light fills: shared region %.0fK/s, elsewhere %.0fK/s\n", RATE(light_region[0]) / 1e3, RATE(light_region[1]) / 1e3);
 +         fprintf(stderr, "  code-page protects/s: none %.0f, one entry %.0f, whole-TLB scans %.0f\n", RATE(protect_kind[0]),
 +                 RATE(protect_kind[1]), RATE(protect_kind[2]));
 ++        /*
-++         * P0-a 的直接判据。这三个数是累积值，不是速率 —— 判"是否发生过"，
-++         * 不是判"多频繁"。
+++         * Slot-identity counters, accumulated not rates -- they answer "did
+++         * this ever happen", not "how often".
 ++         *
-++         *   ram_reuse    > 0  槽位复用发生过（带盘 boot 必然几百次）
-++         *   epoch_stale  = 0  **旧代码不会误判任何一个 block** ——
-++         *                     说明 P0-a 的混叠路径在这轮里从未被走到
-++         *   epoch_stale  > 0  走到过 N 次；旧代码会跳进 N 个按已消失的
-++         *                     host 内存翻译出来的 block。崩不崩取决于
-++         *                     QEMU 是否恰好复用了同一 host 映射。
-++         *
-++         * 这条比 SIGSEGV 可靠：SIGSEGV 是彩票，这是命中计数。
+++         *   ram_reuse    how often add_ram recycled a retired slot.  Measured
+++         *                at 4 per boot on a disk boot (13.35), all before the
+++         *                first vCPU existed.  NOT the same as del_ram calls:
+++         *                a del against a never-mirrored window retires nothing.
+++         *   retired_hit  a block was looked up while its window was retired
+++         *                (size == 0, page_gen == NULL).  This is the one that
+++         *                would have been a NULL dereference: it is the only
+++         *                observer of the del-epoch fix, which is otherwise
+++         *                correct by construction and invisible.
+++         *   epoch_stale  a block's recorded occupancy generation no longer
+++         *                matched its window's.
+++         *   epoch_high_water  largest generation gap seen.
 ++         */
-++        fprintf(stderr, "  P0-a: ram_reuse %llu, epoch_stale %llu, epoch_high_water %llu\n",
+++        fprintf(stderr, "  slots: ram_reuse %llu, retired_hit %llu, epoch_stale %llu, epoch_high_water %llu\n",
 ++                (unsigned long long)m->stats.ram_reuse,
+++                (unsigned long long)m->stats.retired_hit,
 ++                (unsigned long long)m->stats.epoch_stale,
 ++                (unsigned long long)m->stats.epoch_high_water);
 +         fprintf(stderr, "  fast resume refused/s: state %.0f, exit request %.0f, interrupt %.0f, timer %.0f, not cached %.0f\n", RATE(fr_fail[0]),
 +                 RATE(fr_fail[1]), RATE(fr_fail[2]), RATE(fr_fail[3]), RATE(fr_fail[4]));
 +         fprintf(stderr, "  WFE waits in place %.0f/s; exits chained as placed %.0f/s; SVC/ERET resumed in place %.0f/s\n", RATE(wfe_waits),
-+@@ -753,7 +892,23 @@
++@@ -753,7 +884,19 @@
 +         uint64_t host = (uint64_t)(uintptr_t)(b->ram->host + (page_pa - b->ram->pa));
 +         if (host - (b->va & ~((1ull << HV_TLB_PAGE_BITS) - 1)) != xa) return;
 +         pthread_mutex_lock(&m->tr_mu);
 +-        if (__atomic_load_n(&b->ram->page_gen[b->pg], __ATOMIC_ACQUIRE) != b->gen || m->slot_xpa[idx]) {
-++        if (b->ram_epoch != b->ram->epoch ||
+++        if (b->ram->size == 0 ||
+++            b->ram_epoch != b->ram->epoch ||
 ++            __atomic_load_n(&b->ram->page_gen[b->pg], __ATOMIC_ACQUIRE) != b->gen ||
 ++            m->slot_xpa[idx]) {
-++            /* 这里更严重：旧代码会把这个 slot 链到一个用旧 host 内存
-++               翻译出来的 block 上，然后真的跳过去。计一次。 */
+++            /* Same invariant as the fast path, and it matters more here: a
+++               chained exit jumps straight to b->code with no lookup in
+++               between, so a stale target is a jump into code translated
+++               against host memory the guest no longer owns. */
 ++            if (b->ram_epoch != b->ram->epoch) {
 ++                m->stats.epoch_stale++;
 ++                if (b->ram->epoch - b->ram_epoch > m->stats.epoch_high_water)
 ++                    m->stats.epoch_high_water = b->ram->epoch - b->ram_epoch;
-++                if (m->stats.epoch_stale <= 20 || m->stats.epoch_stale % 100 == 0) {
-++                    fprintf(stderr, "henge-p0a: STALE-chain #%llu va=%llx "
-++                            "block_epoch=%u ram_epoch=%u\n",
-++                            (unsigned long long)m->stats.epoch_stale,
-++                            (unsigned long long)b->va,
-++                            b->ram_epoch, b->ram->epoch);
-++                }
 ++            }
 +             pthread_mutex_unlock(&m->tr_mu);
 +             return;
 +         }
-+--- a/core/exception.c	2026-11-17 17:58:03.779935691 +0800
-++++ b/core/exception.c	2026-11-17 17:58:03.785409671 +0800
++--- a/core/exception.c	2026-11-17 18:12:23.409681271 +0800
+++++ b/core/exception.c	2026-11-17 18:12:23.414970355 +0800
 +@@ -234,12 +234,33 @@
 +         return 1;
 +     }
@@ -9763,8 +9726,8 @@ index 0000000000..eb8c7b40d2
 +     if (opc == 1 && ll == 0) { /* BRK */
 +         hv_take_exception(cpu, HV_EXC_SYNC, HV_EC_BRK << 26 | 1u << 25 | imm16, 0, 0, pc);
 +         return 1;
-+--- a/core/machine.c	2026-11-17 17:58:03.780260738 +0800
-++++ b/core/machine.c	2026-11-17 17:58:03.785465797 +0800
++--- a/core/machine.c	2026-11-17 18:12:23.409998651 +0800
+++++ b/core/machine.c	2026-11-17 18:12:23.415023283 +0800
 +@@ -52,6 +52,10 @@
 + }
 + 
@@ -9776,7 +9739,7 @@ index 0000000000..eb8c7b40d2
 +     /* The TLB layout (cpu.h): HV_TLBT from the environment here too, so the Mac tool and the tests can pick it. */
 +     hv_knob[HV_K_TLBT] = getenv("HV_TLBT") ? atoi(getenv("HV_TLBT")) : 1; /* table-major unless asked: 9-20% faster in 5 of 6 paired rounds of the mix */
 +     hv_tlb_tmajor = hv_knob[HV_K_TLBT] != 0;
-+@@ -282,12 +286,71 @@
++@@ -282,12 +286,50 @@
 + }
 + 
 + int hv_machine_add_ram(HvMachine *m, uint64_t pa, uint64_t size, void *host, int readonly) {
@@ -9800,38 +9763,7 @@ index 0000000000..eb8c7b40d2
 ++    for (i = 0; i < m->nram; i++) {
 ++        if (!m->ram[i].host && !m->ram[i].size) {
 ++            r = &m->ram[i];
-++            /*
-++             * P0-a 判据：这是"旧 block 可能与新 page_gen 混叠"的一次机会。
-++             *
-++             * 但"机会"要分开数：复用的是一个**只做数据**的窗口（变量存储）
-++             * 还是被取指过的窗口，决定这条路径能不能产生一个悬空 block。
-++             * 前 8 次打印出来，别只留一个计数 —— 上一轮就是只留计数，
-++             * 结果连"复用没复用"都判不了。
-++             */
 ++            m->stats.ram_reuse++;
-++            if (m->stats.ram_reuse <= 8) {
-++                /*
-++                 * 真正的判据不是"复用了"，而是"复用时这个槽位里还有没有活着的
-++                 * block"。有一个，且 pa 还相同，才是旧代码会跳进去的那种悬空
-++                 * block。只数复用次数说明不了任何事 —— 复用一个从未取过指的
-++                 * 数据窗口，和复用一个取过指的代码窗口，是两件完全不同的事。
-++                 * 只在前 8 次做，扫整张 hash 的代价可以忽略。
-++                 */
-++                uint64_t live = 0;
-++                uint64_t prev_pa = r->pa;
-++
-++                for (uint32_t h = 0; h < HV_BLOCK_HASH; h++) {
-++                    for (HvBlock *b = m->hash[h]; b; b = b->next) {
-++                        if (b->ram == r) live++;
-++                    }
-++                }
-++                fprintf(stderr, "henge-p0a: REUSE #%llu slot=%d pa=%llx size=%llx "
-++                        "readonly=%d old_epoch=%u -> %u prev_pa=%llx live_blocks=%llu\n",
-++                        (unsigned long long)m->stats.ram_reuse, i,
-++                        (unsigned long long)pa, (unsigned long long)size,
-++                        readonly, r->epoch, r->epoch + 1,
-++                        (unsigned long long)prev_pa, (unsigned long long)live);
-++            }
 ++            break;
 ++        }
 ++    }
@@ -9843,14 +9775,24 @@ index 0000000000..eb8c7b40d2
 +     r->size = size;
 +     r->host = host;
 +     r->readonly = readonly;
-++    /* Before the arrays are replaced: blocks from whoever last held this slot
-++       must stop matching, and their page_gen/gen pair will match again once
-++       page_gen is a fresh zeroed array.  See HvRam.epoch. */
+++    /*
+++     * Read this before the arrays are replaced, and read it as "which
+++     * occupancy of this slot is this".  Every block made from the previous
+++     * occupant still points at this same HvRam (slots are reused in place, so
+++     * the address is stable) and will stop matching on ram_epoch.  Without
+++     * that, page_gen being a fresh zeroed array is enough for the page_gen
+++     * test to call a stale block valid again.
+++     *
+++     * hv_machine_del_ram_flags() bumps it too, for the window in between; see
+++     * the note there.  Both bumps are load-bearing and neither is redundant
+++     * with the size test: size says "retired", epoch says "different
+++     * occupant", and a block must be refused in both cases.
+++     */
 ++    r->epoch++;
 +     size_t pages = (size + (1u << HV_TLB_PAGE_BITS) - 1) >> HV_TLB_PAGE_BITS;
 +     r->pages_log2 = 0;
 +     while ((1ull << r->pages_log2) < pages) r->pages_log2++;
-+@@ -424,20 +487,33 @@
++@@ -424,20 +466,33 @@
 + int hv_phys_write(HvMachine *m, uint64_t pa, const void *buf, unsigned len) {
 +     HvRam *r = hv_ram_lookup(m, pa);
 +     if (r && pa + len - r->pa <= r->size) {
@@ -9897,58 +9839,68 @@ index 0000000000..eb8c7b40d2
 +     }
 +     HvMmio *d = hv_mmio_lookup(m, pa);
 +     if (!d || len > 8) return -1;
-+--- a/core/machine.h	2026-11-17 17:58:03.780438877 +0800
-++++ b/core/machine.h	2026-11-17 17:58:03.785985715 +0800
-+@@ -17,6 +17,13 @@
++--- a/core/machine.h	2026-11-17 18:12:23.410248625 +0800
+++++ b/core/machine.h	2026-11-17 18:12:23.416354466 +0800
++@@ -17,6 +17,20 @@
 +     uint8_t *code_pages; /* one byte per 16 KB page: a translated block came from here (2^pages_log2 of them) */
 +     uint32_t pages_log2;
 +     uint32_t *page_gen;  /* per page: bumped to invalidate the blocks translated from it */
-++    /* Bumped by every add_ram().  A retired slot is reused with a fresh
-++       page_gen full of zeros, and the blocks made from the previous occupant
-++       hold gen == 0 too (that is what a page's generation starts at), so the
-++       page_gen check alone would call them valid and run code translated
-++       against memory nobody owns any more.  Blocks remember this epoch as
-++       well, which no reuse can reproduce. */
+++    /* Identifies this slot's current occupancy.  Bumped by add_ram() *and* by
+++       del_ram(), which is what makes it worth having.
+++
+++       add_ram() alone would only distinguish two occupants after the fact.  The
+++       gap in the middle is the dangerous one: between the del and the next add
+++       the slot is retired -- size 0, page_gen NULL -- while pa, flags and
+++       epoch all still match whatever was there before, so a block translated
+++       from the vanished window passes every other test and then reads
+++       page_gen[pg], i.e. NULL[pg].  That is a host SIGSEGV, not a wrong guest
+++       read.  Bumping on the way out closes the window instead of documenting
+++       it.
+++
+++       Blocks remember this as ram_epoch; see hv_block_find(). */
 ++    uint32_t epoch;
 +     /* Per page and CPU: up to three TLB entries (slot << 2 | table, plus 1;
 +        16 bits each) that mapped the page writable, or HV_WHINT_MANY when there
 +        were more. When the page becomes code only those are dropped, not a whole
-+@@ -39,6 +46,7 @@
++@@ -39,6 +53,7 @@
 +     uint32_t flags;      /* HV_BLOCK_* state the translation depends on */
 +     uint32_t ninsns;
 +     uint32_t gen;        /* page_gen of its page when translated */
-++    uint32_t ram_epoch;  /* ram->epoch when translated: tells a reused slot from the old one */
+++    uint32_t ram_epoch;  /* ram->epoch when translated: which occupancy of the slot this is */
 +     struct HvRam *ram;   /* where its page lives, for a quick staleness check */
 +     uint64_t pg;
 +     uint32_t *code;
-+@@ -62,6 +70,26 @@
++@@ -62,6 +77,29 @@
 + /* Counters for --stats: where the time goes. */
 + typedef struct HvStats {
 +     uint64_t blocks, translations, block_flushes;
-++    /* P0-a 的三个直接判据（比 SIGSEGV 彩票可靠得多）。
+++    /* Slot-identity counters.  Accumulated, not rates: they answer "did this
+++     * ever happen", which is the only question that matters for a fault path
+++     * that is either impossible or fatal.
 ++     *
-++     * ram_reuse：add_ram 复用一个退役槽位的次数 —— 这才是"代际混叠"的
-++     *   机会数。注意它**不等于** del 次数：del 打在从未镜像过的窗口上会
-++     *   返回 -1，什么都不退役。实测（13.35，vivo 带盘 boot）：
-++     *   del 704 次 / 真正复用 **4** 次 / 且 4 次全在 vCPU 起来之前。
-++     * epoch_stale：某个 block 因为 ram_epoch 与 ram->epoch 不符被判失效的次数。
-++     *   **这正是旧代码会误判为"有效"并跳进去执行的次数。**
-++     * epoch_high_water：见过的最老 epoch 与新 epoch 的最大差。
+++     *   ram_reuse    add_ram() recycled a retired slot.  Not the same as
+++     *                del_ram calls -- a del against a never-mirrored window
+++     *                retires nothing, and on a disk boot that is 698 of 704.
+++     *                Measured baseline (13.35, disk boot): 5 hits, 704 calls,
+++     *                4 reuses, all before the first vCPU.
+++     *   retired_hit  a block was looked up while its window was retired
+++     *                (size 0, page_gen NULL).  This is the NULL-dereference
+++     *                path: it is the only observer the del-epoch bump has,
+++     *                since that fix is correct by construction and otherwise
+++     *                produces no visible change.
+++     *   epoch_stale  a block's occupancy generation no longer matched.
+++     *   epoch_high_water  largest generation gap seen.
 ++     *
-++     * del_hit / del_miss：del_ram 命中镜像窗口（rc==0）与没命中（rc==-1）
-++     *   的次数。这两个数是"704 次 del 为什么只换来 4 次复用"的直接答案，
-++     *   不需要再从 never-mirror 列表去推断。 */
+++     * del_hit / del_miss: del_ram found a live mirrored window (0) or not
+++     * (-1).  Together with ram_reuse these settle "why did 704 dels retire
+++     * only 4 slots" without reasoning about the never-mirror list. */
 ++    uint64_t ram_reuse, epoch_stale, epoch_high_water;
 ++    uint64_t del_hit, del_miss;
-++    /* retired_hit：快路径/慢路径拿到一个 block，而它所属的窗口已经被
-++     *   del_ram 退役（size==0，page_gen==NULL）的次数。这才是"按已消失的
-++     *   host 内存翻译出来的 block"的直接判据 —— 而且比 epoch_stale 更早，
-++     *   因为 epoch 在 del 时不动。 */
 ++    uint64_t retired_hit;
 +     uint64_t flush_smc, flush_ic, flush_full;  /* why translations were dropped */
 +     uint64_t chained, ijc_fills, ijc_resets;
 +     uint64_t xchained;
-+@@ -207,6 +235,24 @@
++@@ -207,6 +245,24 @@
 +     int nblocks;
 +     uint32_t max_blocks, max_slots; /* sized from the JIT region (machine.c) */
 +     int flush_pending;   /* set by helpers; the dispatcher flushes once the block has left */
@@ -9973,7 +9925,7 @@ index 0000000000..eb8c7b40d2
 + 
 +     void *gic;
 +     /* Devices: called between blocks every so often and while the CPU waits.
-+@@ -225,6 +271,53 @@
++@@ -225,6 +281,53 @@
 +     int trace;           /* print every block entered */
 +     int log;             /* 1: unknown sysregs, undefined instructions, unmapped accesses; 2: also every exception */
 +     int slow_mem;        /* tests: send every load and store through hv_mem_emulate */
@@ -10027,7 +9979,7 @@ index 0000000000..eb8c7b40d2
 +     uint64_t stat_slow_mem; /* hv_mem_emulate calls */
 +     uint64_t access_pc;  /* guest PC of the load/store being emulated, for logs */
 +     uint64_t watch_va;   /* debugging: log every write that touches this guest VA (0: off) */
-+@@ -273,8 +366,36 @@
++@@ -273,8 +376,39 @@
 + 
 + /* Lock-free: blocks are only added (release store) until a flush, which stops every CPU. */
 + static inline HvBlock *hv_block_find(HvMachine *m, uint32_t h, uint64_t va, uint64_t pa, uint32_t flags, uint32_t gen) {
@@ -10036,19 +9988,23 @@ index 0000000000..eb8c7b40d2
 ++    for (HvBlock *b = __atomic_load_n(&m->hash[h], __ATOMIC_ACQUIRE); b; b = __atomic_load_n(&b->next, __ATOMIC_ACQUIRE)) {
 ++        if (b->va == va && b->pa == pa && b->flags == flags && b->gen == gen) {
 ++            /*
-++             * ★ P0-a 的真正判据，就在这里。
+++             * The generation test above is per page and cannot tell one
+++             * occupancy of a RAM slot from the next: page_gen is freed and
+++             * reallocated by add_ram() and starts at zero again, so a block
+++             * made from the previous occupant matches whenever its own gen was
+++             * 0.  b->ram points at the same HvRam either way, because slots are
+++             * reused in place, so nothing else in this comparison notices.
 ++             *
-++             * 这是**主查找路径**（dispatch.c 的 lookup 两次都走它），
-++             * 而 b->gen == gen 只看页级代际。一个 RAM 槽位被 del_ram
-++             * 回收、又被 add_ram 复用时，page_gen 是**全新的全 0 数组**，
-++             * 而旧 block 若是该 region 第一批翻译出来的，b->gen 也是 0
-++             * —— 两者相等，这个 if 就会返回一个按**已消失的 host 内存**
-++             * 翻译出来的 block。
+++             * ram_epoch does, and it is the last check available here -- any
+++             * block that gets past it is returned to the dispatcher, which
+++             * jumps straight into code translated against memory the guest may
+++             * no longer own.
 ++             *
-++             * ram_epoch 是 region 级单调计数器，calloc 清不掉它，
-++             * 所以它能把"同一个槽位的两个不同占位者"区分开。
-++             *
-++             * 计数 + 返回 NULL：等价于把这条混叠路径封死，同时留痕。
+++             * (Scope, so nobody re-derives the wrong lesson: 13.35 measured
+++             * 4 reuses per disk boot with zero live blocks on the slot each
+++             * time, so this particular aliasing has never been observed.  The
+++             * retired-window case is the one with a real NULL in it, and it is
+++             * covered by the same counter plus the size test in lookup().)
 ++             */
 ++            if (b->ram_epoch != b->ram->epoch) {
 ++                m->stats.epoch_stale++;
@@ -10056,9 +10012,8 @@ index 0000000000..eb8c7b40d2
 ++                    uint32_t d = b->ram->epoch - b->ram_epoch;
 ++                    if (d > m->stats.epoch_high_water) m->stats.epoch_high_water = d;
 ++                }
-++                /* 只计数，不打印：这个头文件里没有 stdio。
-++                   打印由 dispatch.c 的调用点在计数变化时做。 */
-++                return NULL;   /* 不返回这个 block：它属于上一个占位者 */
+++                /* Counted only; this header has no stdio. */
+++                return NULL;
 ++            }
 ++            return b;
 ++        }
@@ -10066,8 +10021,8 @@ index 0000000000..eb8c7b40d2
 +     return NULL;
 + }
 + 
-+--- a/core/sysreg.c	2026-11-17 17:58:03.782541291 +0800
-++++ b/core/sysreg.c	2026-11-17 17:58:03.785684403 +0800
++--- a/core/sysreg.c	2026-11-17 18:12:23.412210679 +0800
+++++ b/core/sysreg.c	2026-11-17 18:12:23.415889823 +0800
 +@@ -30,10 +30,59 @@
 +     return mach_absolute_time(); /* 24 MHz on Apple silicon */
 + }
@@ -10226,8 +10181,8 @@ index 0000000000..eb8c7b40d2
 +     irq_check(cpu);
 +     return 0;
 + }
-+--- a/core/sysreg.h	2026-11-17 17:58:03.782892398 +0800
-++++ b/core/sysreg.h	2026-11-17 17:58:03.786130150 +0800
++--- a/core/sysreg.h	2026-11-17 18:12:23.412502992 +0800
+++++ b/core/sysreg.h	2026-11-17 18:12:23.416589242 +0800
 +@@ -14,6 +14,12 @@
 + /* The guest's counter (CNTPCT): host mach_absolute_time, which runs at 24 MHz. */
 + uint64_t hv_counter(void);
@@ -10241,8 +10196,8 @@ index 0000000000..eb8c7b40d2
 + /* One TLBI on one CPU's own TLB and branch cache. */
 + void hv_tlbi_apply(HvCpu *cpu, uint32_t op1, uint32_t crn, uint32_t crm, uint32_t op2, uint64_t xt);
 + 
-+--- a/core/translate.c	2026-11-17 17:58:03.783407377 +0800
-++++ b/core/translate.c	2026-11-17 17:58:03.785772680 +0800
++--- a/core/translate.c	2026-11-17 18:12:23.412931838 +0800
+++++ b/core/translate.c	2026-11-17 18:12:23.416043689 +0800
 +@@ -1018,6 +1018,37 @@
 +         put_helper(e, pc, insn, HV_OP_UNDEF);
 +         return;
@@ -10914,10 +10869,10 @@ index 0000000000..57ce4c2f12
 +type_init(henge_accel_ops_register_types);
 diff --git a/accel/henge/henge-accel.c b/accel/henge/henge-accel.c
 new file mode 100644
-index 0000000000..0ed95e5571
+index 0000000000..b1a74ce890
 --- /dev/null
 +++ b/accel/henge/henge-accel.c
-@@ -0,0 +1,977 @@
+@@ -0,0 +1,1027 @@
 +/*
 + * Henge accelerator: AccelClass side
 + *
@@ -10941,6 +10896,7 @@ index 0000000000..0ed95e5571
 +#include "qemu/osdep.h"
 +#include "qemu/error-report.h"
 +#include "qapi/error.h"
++#include "qapi/visitor.h"
 +#include "qemu/module.h"
 +#include "qemu/accel.h"
 +#include "qemu/main-loop.h"
@@ -11005,7 +10961,7 @@ index 0000000000..0ed95e5571
 +
 +    /* Config knobs (QOM properties on the -accel object). */
 +    uint64_t jit_mb;
-+    bool     stats;
++    int      stats;      /* -accel henge,stats=<seconds between dumps> */
 +    char     *trace;     /* -accel henge,trace=ram,sysreg,... */
 +    int      nregions;   /* mirror count, for HENGE_DEBUG_RAM */
 +
@@ -11743,21 +11699,36 @@ index 0000000000..0ed95e5571
 +    hv_engine_set_tick(h->m, henge_tick_delta24, h);
 +
 +    /*
-+     * HV_STATS=<seconds> turns the engine's periodic dump on.
++     * stats_interval: counting always on, printing off unless asked.
 +     *
-+     * The port never used to set this, and it is not optional: mmu.c and
-+     * translate.c guard their counters with `if (m->stats_interval)`, and
-+     * print_stats() -- the only reader -- is guarded by the same field.  So on
-+     * this accelerator every one of those numbers was pinned at zero by
-+     * construction, and "no stats line in the log" was repeatedly read as
-+     * "nothing happened".  Set it before any vCPU exists so no interval starts
-+     * half-counted.
++     * This one field does two different jobs in the engine, and the port needs
++     * both of them pointed in different directions:
++     *
++     *   it gates *counting* -- mmu.c and translate.c wrap a whole class of
++     *   increments in `if (m->stats_interval)`: TLB range flushes, kernel
++     *   ranges, code-page protection kinds, the remote-drop race counters,
++     *   chained-early.  Zero here does not mean "nothing happened", it means
++     *   "nothing is being counted", and since the port never assigned the
++     *   field, every one of those numbers read as 0 for the entire life of
++     *   this accelerator.
++     *
++     *   it gates *printing* -- print_stats() returns early unless
++     *   `now - last_t >= stats_interval * 24MHz`.
++     *
++     * So the default is one hour: far longer than any boot, which keeps the
++     * counters live and the log clean.  -accel henge,stats=<seconds> or
++     * HV_STATS=<seconds> overrides it when a stats stream is actually wanted.
++     *
++     * Cost of having it non-zero: translate.c takes two mach_absolute_time()
++     * reads per translation to account for translate_ticks.  That is the
++     * translation path, not the execution path, and it is the same price the
++     * standalone runner has always paid.  Set before any vCPU exists so no
++     * interval starts half-counted.
 +     */
 +    {
 +        const char *st = getenv("HV_STATS");
-+        if (st) {
-+            hv_engine_set_stats_interval(h->m, atoi(st));
-+        }
++        int secs = h->stats > 0 ? h->stats : (st ? atoi(st) : 3600);
++        hv_engine_set_stats_interval(h->m, secs);
 +    }
 +
 +    /*
@@ -11847,7 +11818,7 @@ index 0000000000..0ed95e5571
 +    HengeAccelState *h = HENGE_ACCEL(obj);
 +
 +    h->jit_mb = 256;
-+    h->stats = false;
++    h->stats = 0;        /* 0: keep the default (counting on, printing off) */
 +    h->trace = NULL;
 +}
 +
@@ -11866,6 +11837,26 @@ index 0000000000..0ed95e5571
 +    h->trace = (value && *value) ? g_strdup(value) : NULL;
 +}
 +
++/* QOM: -accel henge,jit-mb=512,stats=5 */
++static void henge_get_stats(Object *obj, Visitor *v, const char *name,
++                            void *opaque, Error **errp)
++{
++    int64_t value = HENGE_ACCEL(obj)->stats;
++
++    visit_type_int(v, name, &value, errp);
++}
++
++static void henge_set_stats(Object *obj, Visitor *v, const char *name,
++                            void *opaque, Error **errp)
++{
++    int64_t value;
++
++    if (!visit_type_int(v, name, &value, errp)) {
++        return;
++    }
++    HENGE_ACCEL(obj)->stats = (int)value;
++}
++
 +static void henge_accel_class_init(ObjectClass *oc, const void *data)
 +{
 +    AccelClass *ac = ACCEL_CLASS(oc);
@@ -11873,6 +11864,20 @@ index 0000000000..0ed95e5571
 +    object_class_property_add_str(oc, "trace", henge_get_trace, henge_set_trace);
 +    object_class_property_set_description(oc, "trace",
 +        "Diagnostic channels: ram,sysreg,irq,psci,timer,env,dma,all");
++
++    /*
++     * Seconds between engine stats dumps.
++     *
++     * Note what 0 does NOT mean: the field is not only a print interval, it is
++     * also the gate on a whole class of counters (see its use in
++     * henge_init_machine).  0 means "stop counting", not "be quiet" -- the
++     * default of 3600 already gives quiet without losing the counters.  Lower
++     * it to see a stream; there is no reason to raise it.
++     */
++    object_class_property_add(oc, "stats", "int", henge_get_stats,
++                              henge_set_stats, NULL, NULL);
++    object_class_property_set_description(oc, "stats",
++        "Seconds between engine stats dumps (default 3600: counters on, quiet)");
 +
 +    ac->name = "Henge";
 +    ac->init_machine = henge_init_machine;
@@ -12604,10 +12609,10 @@ index 0000000000..c7a5257088
 +}
 diff --git a/accel/henge/henge-engine.c b/accel/henge/henge-engine.c
 new file mode 100644
-index 0000000000..d6fa6d5d2d
+index 0000000000..e56c92dbaf
 --- /dev/null
 +++ b/accel/henge/henge-engine.c
-@@ -0,0 +1,889 @@
+@@ -0,0 +1,908 @@
 +/*
 + * Henge accelerator: the engine-side half of the bridge
 + *
@@ -12709,33 +12714,33 @@ index 0000000000..d6fa6d5d2d
 +    int i;
 +
 +    /*
-+     * P0-a 的出口，无条件。
++     * Slot-identity counters, printed unconditionally every 64 calls.
 +     *
-+     * 13.34 写"实测 0 次命中"，那是错的。三个计数器只在 print_stats() 里
-+     * 被读出来，而 print_stats 由 m->stats_interval 门控 —— 这个移植层从来
-+     * 没有给它赋过值（那是独立 runner 的 --stats 选项）。逐条命中的打印又
-+     * 套了 getenv("HV_P0A_STATS")，那个变量在脚本、文档、设备环境里都不存在。
++     * Unconditionally is the whole point, and it is the lesson of 13.34/13.35:
++     * the first version of this probe was gated twice -- once by
++     * getenv("HV_P0A_STATS"), which nothing ever set, and once by living
++     * inside print_stats(), which the port never enabled because it never
++     * assigned m->stats_interval.  A run then produced a log with no probe
++     * lines in it, and that absence was written down as "measured zero".  An
++     * instrument that has never printed a non-zero value is worse than no
++     * instrument: it carries the appearance of having measured something.
 +     *
-+     * 于是"日志里没有那行"被当成了"没有发生"。这和"探针加在次要路径上
-+     * 给出干净的假阴性"是同一类错误，只是这次的出口在另一头：不是没数到，
-+     * 是数到了却从没往外读。
-+     *
-+     * 现在每 64 次 del 打一行，不经过任何 getenv，也不经过 print_stats。
-+     * 带盘 boot 的 del 次数在三百以上，所以至少五行，够判"有没有"。
++     * So: no getenv, no stats_interval, no level.  A disk boot makes 700+ of
++     * these calls, which is eleven lines.
 +     */
 +    {
 +        static unsigned ndel;
 +        unsigned n = __atomic_add_fetch(&ndel, 1, __ATOMIC_RELAXED);
 +
 +        if ((n & 63) == 0) {
-+            fprintf(stderr, "henge-p0a: del#%u defer=%d del_hit=%llu del_miss=%llu "
-+                    "ram_reuse=%llu epoch_stale=%llu retired_hit=%llu hw=%llu nram=%d\n",
++            fprintf(stderr, "henge: del#%u defer=%d del_hit=%llu del_miss=%llu "
++                    "ram_reuse=%llu retired_hit=%llu epoch_stale=%llu hw=%llu nram=%d\n",
 +                    n, defer_flush,
 +                    (unsigned long long)m->stats.del_hit,
 +                    (unsigned long long)m->stats.del_miss,
 +                    (unsigned long long)m->stats.ram_reuse,
-+                    (unsigned long long)m->stats.epoch_stale,
 +                    (unsigned long long)m->stats.retired_hit,
++                    (unsigned long long)m->stats.epoch_stale,
 +                    (unsigned long long)m->stats.epoch_high_water,
 +                    m->nram);
 +        }
@@ -12748,9 +12753,10 @@ index 0000000000..d6fa6d5d2d
 +        }
 +    }
 +    if (!r) {
-+        /* 没命中一个还活着、还镜像着的窗口。带盘 boot 里绝大多数 del 是这种：
-+           romd 变量存储进命令模式后上了 never-mirror 列表，此后它的每一次
-+           toggle 都只产生 region_del，而引擎这边早就没有任何东西可退役。 */
++        /* No live, still-mirrored window at this base.  Most dels on a disk
++           boot are these: once the romd variable store has entered command
++           mode it is on the never-mirror list, so every later toggle of it
++           produces a region_del with nothing left in the engine to retire. */
 +        m->stats.del_miss++;
 +        return -1;
 +    }
@@ -12809,16 +12815,28 @@ index 0000000000..d6fa6d5d2d
 +     *    into the hole, so main_ram (a pointer into the array) needs the same
 +     *    move applied -- otherwise it dangles into the vacated tail. */
 +    /*
-+     * Bump the epoch here as well, and this is the load-bearing part.
++     * Bump the epoch on the way out.  This is the load-bearing line.
 +     *
-+     * epoch used to change only in add_ram(), which made it a guard against
-+     * "the slot was reused by somebody else" but said nothing about the window
-+     * in between -- when the slot is retired and page_gen is already NULL.  In
-+     * that window every other test in the fast path still passes: b->pa and
-+     * b->flags are whatever they were, and ram_epoch == ram->epoch because
-+     * nothing bumped it.  The comparison then evaluates b->ram->page_gen[b->pg],
-+     * i.e. NULL[...], which is a SIGSEGV in the host rather than a wrong guest
-+     * read.  Bumping on the way out closes it with no new machinery.
++     * This function frees page_gen and zeroes size, so from here until the
++     * next add_ram() the slot is "retired": a block translated from it still
++     * carries the same pa and flags, and -- before this line existed -- the
++     * same epoch too, because only add_ram() bumped it.  Every test in the
++     * dispatcher's fast path therefore passed, and the next thing it evaluated
++     * was b->ram->page_gen[b->pg], i.e. NULL[pg]: a SIGSEGV in the host, not a
++     * wrong guest read.
++     *
++     * Upstream never hits it because the standalone engine deletes RAM only at
++     * teardown, with no blocks in flight.  The port deletes it constantly, from
++     * a MemoryListener, while vCPUs run -- pflash toggles the romd variable
++     * store twice per CFI command write, 704 times in one disk boot.  So this
++     * is a genuine engine-API hazard made reachable by a hosted caller, and it
++     * is a candidate for the first patch sent upstream rather than kept in
++     * local-edits.patch.  Tracked in QEMU-BACKEND.md 13.36; not urgent.
++     *
++     * Not observed in the field yet (retired_hit = 0 across six boots, 13.35):
++     * of the 704 calls only 5 found a live window, and those 5 all happened
++     * before any block existed.  Correct by construction, with nrun v2's reset
++     * loop as its designated observer.
 +     */
 +    r->epoch++;
 +    free(r->code_pages);
@@ -13005,18 +13023,24 @@ index 0000000000..d6fa6d5d2d
 +}
 +
 +/*
-+ * Turn the engine's periodic stats dump on.
++ * stats_interval: one field, two jobs, and that is the trap.
 + *
-+ * This is not a debugging nicety.  A whole class of counters is incremented
-+ * *only* when stats_interval is non-zero (mmu.c: tlb_range_flushes,
-+ * kernel_ranges, protect_kind, race_kind; translate.c: chained_early), and
-+ * print_stats() -- the one place that reads them out, including the block-hash
-+ * "stale blocks" witness -- is gated on it too.  The standalone runner sets it
-+ * from --stats; the QEMU port never set it at all, so every one of those
-+ * numbers has been structurally zero since the port began, and the absence of
-+ * the dump was read as the absence of the event.
++ * It gates *counting* -- a whole class of increments in mmu.c and translate.c
++ * is wrapped in `if (m->stats_interval)`: tlb_range_flushes, kernel_ranges,
++ * protect_kind, race_kind, chained_early.  Zero does not mean "nothing
++ * happened", it means "nothing is being counted".
 + *
-+ * Seconds between dumps.  HV_STATS=<n> in the environment turns it on.
++ * It also gates *printing* -- print_stats() returns early unless
++ * `now - last_t >= stats_interval * 24MHz`.
++ *
++ * The standalone runner sets it from --stats.  The QEMU port never set it at
++ * all, so every one of those numbers has been structurally zero since the port
++ * began, and the absence of the dump was read as the absence of the event --
++ * five separate times.
++ *
++ * Callers that want counting without a stats stream should pass a value longer
++ * than the run (the accelerator uses one hour).  A caller that passes 0 gets
++ * silence *and* no counting, which is never what anyone means.
 + */
 +void hv_engine_set_stats_interval(HvMachine *m, int secs)
 +{

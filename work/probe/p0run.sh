@@ -78,15 +78,26 @@ LINES=$(grep -av '^#' "$LOG" 2>/dev/null | wc -l)
 BDS=$(grep -ac BdsDxe "$LOG" 2>/dev/null)
 LNX=$(grep -ac 'Linux version' "$LOG" 2>/dev/null)
 SYS=$(grep -ac 'systemd\[1\]' "$LOG" 2>/dev/null)
-STALE=$(grep -ac 'henge-p0a: STALE' "$ERR" 2>/dev/null)
-DELS=$(grep -ac 'henge-p0a: del#' "$ERR" 2>/dev/null)
-LASTDEL=$(grep -a 'henge-p0a: del#' "$ERR" 2>/dev/null | tail -1)
+# 不写死标签前缀。改标签而忘改脚本已经浪费过一轮（探针打出来了，脚本报 0 行），
+# 所以这里只匹配探针自身的形状："del#<数字>" 与 "RETIRED-window"。
+RETIRED=$(grep -ac 'RETIRED-window' "$ERR" 2>/dev/null)
+DELS=$(grep -ac 'del#[0-9]' "$ERR" 2>/dev/null)
+LASTDEL=$(grep -a 'del#[0-9]' "$ERR" 2>/dev/null | tail -1)
 RSS_END=$(tail -1 "$SC" | awk '{print $5}')
 RSS_MAX=$(awk 'NR>1{if($5>m)m=$5}END{print m}' "$SC")
 
-echo "TAG=$TAG BIN=$(basename $BIN) MAXS=$MAXS"
+# 仪器自检：guest 都跑到 systemd 了，del 探针却一行没有 —— 那不是"没发生"，
+# 是出口断了。报 INSTRUMENT-DEAD 而不是报 0，别让空仪器冒充测量结果。
+if [ "$LINES" -gt 100 ] && [ "$DELS" -eq 0 ]; then
+    echo "INSTRUMENT-DEAD: lines=$LINES 但 del 探针 0 行 —— 出口断了，本轮不可用" >&2
+    INSTR=DEAD
+else
+    INSTR=OK
+fi
+
+echo "TAG=$TAG BIN=$(basename $BIN) MAXS=$MAXS instrument=$INSTR"
 echo "lines=$LINES bds=$BDS linux=$LNX systemd=$SYS"
 echo "dsusp_cum_ms=$SUSP   verdict=$( [ $SUSP -lt 1000 ] && echo VALID || echo INVALID )"
 echo "rss_first=$(awk 'NR>1 && $5>0 {print $5; exit}' "$SC") rss_max=$RSS_MAX rss_end=$RSS_END"
-echo "STALE_hits=$STALE del_probe_lines=$DELS"
+echo "retired_hits=$RETIRED del_probe_lines=$DELS"
 echo "last: $LASTDEL"

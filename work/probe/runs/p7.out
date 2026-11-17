@@ -1,0 +1,6 @@
+TAG=p7 BIN=q-p0a8 MAXS=150
+lines=586 bds=2 linux=1 systemd=76
+dsusp_cum_ms=1   verdict=VALID
+rss_start=0 rss_max=1026712 rss_end=1020608
+STALE_hits=0 del_probe_lines=0
+last: 

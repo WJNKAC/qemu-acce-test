@@ -5076,3 +5076,228 @@ block 可查的启动期，所以没机会踩。这是"修了一个真的洞，�
 单进程连续 reset N 轮后这三个数应当线性增长、`retired_hit` 仍应为 0。
 一旦哪轮 `retired_hit > 0`，那就是真的踩到了第七节那个洞。
 
+
+---
+
+### 13.36 收尾审计：q-p0a 的惰性修复按"同族合并"处置，stats_interval 两个延伸做完
+
+13.35 之后有两笔账挂着：一段前提已死的代码还在正确性路径上，
+一个"修对了但不可验证"的修复需要定性，以及 stats_interval 那个发现的两个延伸。
+
+#### 一、审计 q-p0a 的 diff：结论是"同族合并"，不是"只留一行"
+
+先把问题问准：**"只保留 del-epoch 一行"在技术上不成立。**
+`del_ram_flags()` 在 `accel/henge/henge-engine.c`（移植层），
+而 `epoch` 字段、它的登记点、它的全部读者都在 `engine/core/`。
+递增没有读者就是死代码 —— 只留那一行，等于把漏洞的锁孔留下、把锁拆掉。
+
+所以真问题是：**epoch 机制的哪些部分是 del-epoch 的必需件，哪些只是为
+"代际混叠"这个故事写的散文。** 逐件清点：
+
+| 位置 | 内容 | 判定 | 处置 |
+|---|---|---|---|
+| `machine.h` `HvRam.epoch` | 字段 | del-epoch 的载体 | 保留，注释重写 |
+| `machine.h` `HvBlock.ram_epoch` | 字段 | 读者需要的记忆 | 保留 |
+| `machine.c` `add_ram` | `r->epoch++` | 登记新占位者 | 保留，注释重写 |
+| `henge-engine.c` `del_ram_flags` | `r->epoch++` | **核心修复** | 保留 |
+| `dispatch.c` 快路径 | `ram_epoch == epoch` 且 `size != 0` | 读者 | 保留（`size` 是本轮新加的短路） |
+| `dispatch.c` | `nb.ram_epoch = ram->epoch` | 登记点 | 保留 |
+| `dispatch.c` hash 清理 | epoch 不符则摘链 | 防悬空留在表里 | 保留 |
+| `dispatch.c` `chain()` | epoch 不符则不链 | 链到悬空更危险 | 保留（另加 `size` 判据） |
+| `machine.h` `hv_block_find` | epoch 不符则返回 NULL | 主路径纵深防御 | 保留 |
+| `machine.h` `HvStats` 注释 | "P0-a 的三个直接判据" | 死叙事 | **重写为 slot-identity 语义** |
+| `dispatch.c` `print_stats` | `P0-a: ram_reuse ...` 行 | 死标签 | **改名 `slots:`，加 retired_hit** |
+| `dispatch.c` 快路径 | `stale0` + `STALE-find` 打印 | **纯探针，死假设专属** | **删除** |
+| `dispatch.c` `chain()` | `STALE-chain` 的 fprintf | 纯打印 | **删除**（计数保留） |
+| `machine.c` `add_ram` | `live_blocks` 扫全表 + REUSE 打印 | **死假设专属，且在正确性路径上做全表扫描** | **删除** |
+
+**净变化：`local-edits.patch` 809 → 784 行（-25）。**
+
+被删的三处有一个共同点：它们**不改变任何行为**，只是"想办法看见混叠"。
+`live_blocks` 那次甚至要遍历整张 block hash 表 —— 结论已经出了（4 次复用、
+全部 0），继续把它挂在 `add_ram()` 上就是在正确性路径上为一个已死的假设付费。
+
+另外做了一处**行为**收紧，而不是删除：快路径原来是
+
+```c
+if (c && c->pa == pa && c->flags == flags && c->ram_epoch == c->ram->epoch &&
+    c->ram->page_gen[c->pg] == c->gen) return c;
+```
+
+现在多一道 `c->ram->size != 0`，排在 `page_gen` 之前：
+
+```c
+if (c && c->pa == pa && c->flags == flags && c->ram->size &&
+    c->ram_epoch == c->ram->epoch && c->ram->page_gen[c->pg] == c->gen) return c;
+```
+
+上一版把"退役窗口"写成只计数、不改行为，这等于承认了 `NULL[pg]` 那条路
+但不去堵。既然 `epoch` 和 `size` 是同一个不变式的两种说法，
+就该两个都进短路链：`epoch` 管"换了占位者"，`size` 管"当前无人占"。
+
+#### 二、del-epoch 的定性：by-construction 纵深防御，不是被验证的行为变化
+
+必须写清楚，否则下一轮会有人把它当"已验证修复"引用：
+
+| 问题 | 答案 |
+|---|---|
+| 修前修后行为有差异吗？ | **没有可观测差异**。`retired_hit` 在六个 boot 里都是 0 |
+| 为什么不触发？ | 704 次 `del` 只有 5 次命中活着的窗口，且全在 `del#320` 之前 —— 那时 guest 还没翻译出 block |
+| 那它是对的吗？ | **是，by construction**。退役窗口里快路径的其它条件全部成立，`page_gen` 已置 NULL，读它就是 `NULL[pg]` |
+| 它的证据是什么？ | 代码路径的静态必然性，不是运行时计数 |
+| 它什么时候会有证据？ | **只有 nrun v2 的 reset 序列**：单进程连续 reset 会让"有 block 存在时窗口退役"第一次成为可能 |
+
+所以文档里的措辞统一为：**"纵深防御，正确性由构造保证，行为变化未被观测"**。
+不写"已修复"，也不写"已验证"。
+
+`retired_hit` 因此不是普通计数器，它是**这个修复唯一的指定观察者**。
+nrun v2 的验收条件之一就是它全程为 0 —— 一旦 >0，说明序列形态真的踩到了。
+
+#### 三、这是引擎 API 层的真洞，是第一笔该回馈上游的提交
+
+`hv_machine_del_ram_flags()` 的语义是"退役这个窗口"，但它只释放
+`code_pages/page_gen/whint`、清 `host/size`，**不动 `epoch`**。
+`epoch` 只在 `hv_machine_add_ram()` 里递增。
+
+上游为什么不炸：独立引擎只在 teardown 时删 RAM，那时没有 block 在飞。
+移植层把这个 API 从"一次生命周期调一次"变成"每条 CFI 命令写调两次"
+（704 次/boot），于是"退役窗口"从理论上的空集变成实际存在的一段。
+
+这是一个**hosted caller 让引擎 API 隐患变得可达**的典型例子，
+适合作为第一笔上游提交（不改语义，只补一个递增 + 一段注释）。
+已在 `henge-engine.c` 的修复点标注，**不急，记着**。
+
+#### 四、stats_interval 延伸一：赋上值，且把一个死字段复活
+
+上一轮用 `HV_STATS=<秒>` 打开它，但那是"要的时候才开"。
+这一轮改成**默认就开，只是打印间隔设成一小时**：
+
+```c
+const char *st = getenv("HV_STATS");
+int secs = h->stats > 0 ? h->stats : (st ? atoi(st) : 3600);
+hv_engine_set_stats_interval(h->m, secs);
+```
+
+为什么能用一小时的间隔同时满足"计数"和"不刷屏"：
+`print_stats()` 的真打印条件是 `now - last_t >= stats_interval * 24MHz`，
+而**计数**的条件只是 `stats_interval != 0`。所以一个大于任何 boot 时长的值
+让所有计数器工作、一行日志都不多。
+
+顺带发现 `HengeAccelState` 里有个**死字段**：
+
+```c
+uint64_t jit_mb;
+bool     stats;      /* ← 声明了、初始化成 false、没有任何属性暴露、没有任何读者 */
+```
+
+这正是 13.7 那个"把我们的 `--stats` 挂到 `AccelClass.get_stats`"计划留下的残骸。
+现在把它改成 `int stats`（秒），挂成 QOM 属性：
+
+```
+-accel henge,stats=5      # 每 5 秒一行 stats
+```
+
+优先级：`-accel ...,stats=N` > `HV_STATS=N` > 默认 3600。
+
+**复活的计数器清单**（此前结构性恒 0，现在开始工作）：
+
+| 计数器 | 位置 | 含义 |
+|---|---|---|
+| `tlb_range_flushes` / `range_spared` / `kernel_ranges` | `mmu.c` | 大范围 TLBI 的分流 |
+| `protect_kind[3]` | `mmu.c` | 代码页保护时扫了多少 TLB 条目 |
+| `race_kind[3]` | `mmu.c` | 远程 drop 的三种竞态 |
+| `posted_kind[4]` | `mmu.c` | TLBI 投递给别的 CPU 的四类 |
+| `chained_early` | `translate.c` | 链式退出提前落地 |
+| `translate_ticks`、`wfi_ticks` | `dispatch.c` | 翻译/睡眠时间占比 |
+| block-hash 的 `stale blocks` | `dispatch.c` | 垃圾 block 堆积 |
+
+代价：`translate.c` 每次翻译多两次 `mach_absolute_time()`。
+那是**翻译路径**不是执行路径，且独立 runner 一直付这个价。
+
+#### 五、stats_interval 延伸二：历史文档审计 —— 干净，而且教训早就写在纸上
+
+grep 范围：`MEASURE.md`、`QEMU-BACKEND.md`、`BENCH.md`、`KVM-VS-ENGINE.md`、
+`BOOT-VS-TCG.md`、`CALL-PATH.md`、`LINMAP.md`、`FINDINGS.md`。
+
+| 检查项 | 结果 |
+|---|---|
+| 恒 0 计数器名（`tlb_range_flushes` 等 5 个）在文档中的引用 | 11 处，**全部在 13.35 我自己写的那段里**（描述这个 bug 本身） |
+| `[0-9]+\.[0-9]+M/s`、`[0-9]+K/s`、`blocks [0-9]` 这类引擎速率数字 | **0 命中** |
+| 引用 `--stats` 的段落 | 9 处，全部在 `MEASURE.md` / `BOOT-VS-TCG.md`，主语是**独立 runner `hv-linux`** |
+
+`MEASURE.md` 的数字来自 `hv-linux ... --stats`，那个 runner 设了 interval，
+**所以那些数字有效，无污染。**
+
+而更值得记的是这一条 —— `MEASURE.md:245`：
+
+```
+### 5.4 HV_SUM 不带 --stats 时所有分类计数器为 0
+因为每个计数器都被 `if (m->stats_interval)` 门控。第一次跑出一排 0，白跑一轮。
+```
+
+**这个坑独立 runner 在几个月前就踩过、写下了、还标了"踩过"。**
+移植层从第一天起就在同一个坑里，因为那条知识没有跨过 runner→port 这道边界。
+
+这才是 13.34 那个错误的完整解释：不是没人知道，是**知道的地方不是发生的地方**。
+所以修法不能只是"这次接上了"，得让它**结构上不可能再断**：
+
+- 计数器递增不再依赖调用方设值（默认 3600，任何调用方都拿到非零）
+- `hv_engine_set_stats_interval()` 的注释里写明"传 0 = 停止计数，不是静音"
+- `p0run.sh` 加仪器自检（下一节）
+
+#### 六、第六次同类错误：改标签忘改脚本 —— 这次是脚本自己抓到的
+
+清理时把探针的前缀从 `henge-p0a:` 改成 `henge:`（因为 P0-a 这个名字已经不该
+再出现），结果 `p0run.sh` 里写死的 `grep -ac 'henge-p0a: del#'` 抓不到任何东西，
+输出 `del_probe_lines=0`。
+
+**探针明明打了 11 行。** 这是本轮的第 6 次仪器类错误，形态是新的（前五次是
+位置/出口，这次是**读端与写端的字符串耦合**）。
+
+处置不是"这次改对了"，而是让脚本不可能再被这种耦合骗到：
+
+```sh
+# 不写死标签前缀，只匹配探针自身的形状
+RETIRED=$(grep -ac 'RETIRED-window' "$ERR")
+DELS=$(grep -ac 'del#[0-9]' "$ERR")
+
+# 仪器自检：guest 都跑到 systemd 了，del 探针却一行没有
+# —— 那不是"没发生"，是出口断了。
+if [ "$LINES" -gt 100 ] && [ "$DELS" -eq 0 ]; then
+    echo "INSTRUMENT-DEAD: ..." >&2; INSTR=DEAD
+fi
+```
+
+（第一次写还写成了 `'henge.: del#'` —— `.` 只匹配一个字符，`henge` 加 `.` 之后
+又要求一个冒号，永远不匹配。被 p7 的日志当场打回。）
+
+**四关纪律补第五关：** 位置在主路径、出口无门控、stderr 可达、判据非空
+—— 再加**读端不耦合写端的标签**。前三关防"没数到"，第四关防"数了没处去"，
+第五关防"数了也读了但读错行"。
+
+#### 七、回归验证
+
+`q-p0a8`（清理 + stats 默认开启 + QOM 属性）单轮带盘 boot：
+
+```
+TAG=p7  lines=586  bds=2 linux=1 systemd=76
+dsusp_cum_ms=1  verdict=VALID
+del#704 defer=1 del_hit=5 del_miss=698 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+```
+
+与 `p6`（清理前）**逐项一致**：`del_hit=5 / del_miss=698 / ram_reuse=4 /
+retired_hit=0 / epoch_stale=0`。删掉的是探针，不是信息；
+加上的是"退役窗口在快路径上被短路"这一条行为。
+
+#### 八、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| q-p0a 惰性代码 | ✅ 审计完：**同族合并**，净 -25 行，删的是纯探针，留的是 del-epoch 的读者 |
+| del-epoch 定性 | ✅ **by-construction 纵深防御**，行为变化未被观测，唯一观察者是 `retired_hit` |
+| 上游回馈 | 📌 记为第一笔候选，不急 |
+| stats_interval | ✅ 默认 3600（计数开、打印关）；死字段 `stats` 复活为 QOM 属性 |
+| 历史文档 | ✅ **无污染**（数字全来自设了 interval 的独立 runner） |
+| 知识未跨边界 | ⚠️ `MEASURE.md:245` 早有同样教训 —— 修法是不让它能再断 |
+| 第六次仪器错误 | ✅ 已由脚本自检兜住，纪律补第五关 |
+
