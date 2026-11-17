@@ -42,3 +42,25 @@ ECAM 枚举完全依赖它。第一次写 ECAM 探针时它读回 0，我以为�
 ../henge-lifecycle.sh          # 全部 8 项 + tcg 对拍
 ../henge-probe.sh              # 只跑 probe.S（最快的一条）
 ```
+
+## 跑长任务一律用 `rundev.sh`（13.57）
+
+```sh
+./rundev.sh start   fix20 /data/local/tmp/q-p0a9 20 2400 2 /data/local/tmp/seed-v3.iso
+./rundev.sh status  fix20
+./rundev.sh collect fix20 ./runs
+./rundev.sh clean   fix20
+```
+
+**不要** `adb shell 'sh seedtest.sh ...'` 直接前台跑。原因不是"不方便"，是**会卡死**：
+
+输出直连 adb 管道，宿主那边不读了，设备侧的 `echo` 就阻塞在 `write` 上，
+脚本连自己的 timeout 都失效（实测：`timeout=900s` 的跑到 50 分钟后还活着，
+`PPID` 变成 1）。现场和"guest 卡死"完全同形。
+
+`rundev.sh` 在设备侧是 `setsid ... > st-<tag>.out 2>&1 < /dev/null`，
+管道断了对它没有影响；`start` 前还会拒绝"有别的 seedtest 在跑"的启动请求
+（它们会抢 4460/10080，撞上就是 `Address already in use`）。
+
+`collect` 不采信脚本的汇总 —— 它把 serial 拉回来**按判据重算**。
+汇总可能根本没跑到（管道断、被杀），而 serial 是 append-only 的。
