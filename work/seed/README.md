@@ -68,6 +68,34 @@ sh seedtest.sh <tag> /data/local/tmp/q-p0a8 <rounds> <timeout> 2 /data/local/tmp
 
 `seedtest.sh` 会 `cp` 一份 `deb12-clean.qcow2` 再挂 —— **绝不直接挂基线盘**。
 
+### ⚠ 两个会静默出错的坑
+
+**1. 文件名必须正好是 `user-data` 和 `meta-data`。**
+`genisoimage` 用的是**你给的 basename**：
+
+```sh
+genisoimage ... user-data-v3 meta-data-v3     # ISO 里就叫 user-data-v3
+```
+
+cloud-init 找不到 `user-data` 就当成空 seed 跑，**不报错**，只是整轮
+没有 `NETPROBE-BEGIN` —— 现场看起来像"guest 卡住"。正确做法是先拷成
+正确名字再打包：
+
+```sh
+mkdir -p /tmp/mkseed && cp user-data-v3 /tmp/mkseed/user-data
+cp meta-data-v3 /tmp/mkseed/meta-data
+(cd /tmp/mkseed && genisoimage -quiet -output /tmp/seed-v3.iso -volid cidata -joliet -rock user-data meta-data)
+```
+
+**2. 打完必须把内容抽回来比对。** 不要只信 `genisoimage` 返回 0：
+
+```sh
+7z x -o/tmp/isochk -y /tmp/seed-v3.iso user-data meta-data
+diff -q /tmp/isochk/user-data user-data-v3 && echo 一致
+```
+
+上面第 1 条就是这么抓到的（`diff: /tmp/.../user-data: 没有那个文件`）。
+
 ## 清理（把 netprobe 从系统盘移除）
 
 用 `cleanup-user-data`，**必须用 `bootcmd` 不能用 `runcmd`**：

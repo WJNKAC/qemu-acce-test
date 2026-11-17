@@ -128,8 +128,14 @@ killtree "$QP"
 sleep 1
 trap - EXIT HUP INT TERM
 
-# ANSI：systemd 的 [  OK  ] 行自带颜色码，会切断任何跨词匹配。
-sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$LOG.noansi" 2>/dev/null
+# ANSI：systemd 的 [  OK  ] 行自带颜色码。
+# ⚠ toybox 的 sed 不认 \x1b（13.56 实测：一个字节都没剥掉）。
+# 用 printf 现造 ESC 才是可移植的写法。
+_esc=$(printf '\033')
+sed "s/${_esc}\[[0-9;]*m//g" "$LOG" > "$LOG.noansi" 2>/dev/null
+# 正对照自检（理由见 seedtest.sh 同段注释）：比字节，不看屏幕。
+_probe=$(printf 'A%s[0;1mB' "$_esc" | sed "s/${_esc}\[[0-9;]*m//g")
+[ "$_probe" = "AB" ] || say "!! strip_ansi 自检失败（sed 不认 ESC）—— 依赖 noansi 的判据作废"
 
 say
 say "--- DNSDIAG 原文（t=${ELAPSED}s，ansi 已剥）---"

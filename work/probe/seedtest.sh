@@ -36,6 +36,10 @@ NET=${NET:-slirp}
 # passt 的必须项：三个运行时开关 + DNS。缺一个就是 SIGSYS 或取不到 nameserver。
 export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1
 PASST_DNS=${PASST_DNS:-223.5.5.5}
+# 13.55：打过 0002 的二进制（q-p0a9+）读这个变量补上上游 DNS。
+# 老二进制（q-p0a8-）根本不 getenv 它，所以默认给值对它们零影响。
+SLIRP_DNS_SERVER=${SLIRP_DNS_SERVER-223.5.5.5}
+[ -n "$SLIRP_DNS_SERVER" ] && export SLIRP_DNS_SERVER
 
 [ -x "$BIN" ] || { echo "MISSING $BIN"; exit 3; }
 [ -f "$SEED" ] || { echo "MISSING $SEED"; exit 3; }
@@ -131,10 +135,30 @@ roll_log() {
     echo "## LOG-ROLLED at ${sz}B (kept last $((sz - cut))B)" >> "$LOG"
 }
 cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
-# 去 ANSI 后的日志副本：systemd 的 [  OK  ] 行带颜色码，
-# "Reached target ^[[0;1;39mmulti-user.target" 里 pattern 会被颜色码切断。
+# 去 ANSI 后的日志副本：systemd 的 [  OK  ] 行带颜色码。
+#
+# ⚠ 13.56 实测：toybox 的 sed **不认 `\x1b`**。原来那句
+#   sed -E 's/\x1b\[[0-9;]*m//g'
+# 在设备上是 no-op —— 360734 B 进，360734 B 出，一个字节都没动。
+# 它一直没被发现，是因为所有判据的 pattern 里都带 `.*`，而 `.*` 能把
+# 颜色码一起吃掉，所以读数是"碰巧对"的。哪天真写一个带锚点（$ 结尾）的
+# 判据，就会静默失效。
+#
+# 可移植写法：用 printf 现造 ESC 再塞进 sed（POSIX，GNU/BSD/toybox 都吃）。
 NOANSI=$LOG.noansi
-strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$NOANSI" 2>/dev/null; }
+strip_ansi() {
+    _esc=$(printf '\033')
+    sed "s/${_esc}\[[0-9;]*m//g" "$LOG" > "$NOANSI" 2>/dev/null
+    # 自检用**正对照**，不是查残留：非 SGR 的转义序列（光标、清行）本来就该留着，
+    # 查残留必然误报，而误报会训练人忽略告警。这里喂一段已知带色码的样本，
+    # 看同一个 sed 剥不剥得掉。
+    # 注意：剥不掉时探针**打印出来照样像 "AB"**（ESC 序列在终端里不可见），
+    # 所以必须比字节，不能看屏幕。
+    _probe=$(printf 'A%s[0;1mB' "$_esc" | sed "s/${_esc}\[[0-9;]*m//g")
+    if [ "$_probe" != "AB" ]; then
+        say "!! strip_ansi 自检失败：这个 sed 不认 ESC 转义 —— 依赖 $NOANSI 的判据全部作废"
+    fi
+}
 
 # ---- boot_id 哨兵 ----
 # 唯一能区分"QEMU 崩了"和"整机被重启/关机"的手段。
@@ -252,12 +276,18 @@ CEXTOK=$((CEXTN - CEXT000))
 # （更早的版本数的是 'PROBE-ERR'，而探针从不打这个串 —— 等于永远 0，空仪器。）
 PERR=$(cnt 'state=err:')
 CI=$(cnt 'ci-info: | Device')
+# ⚠ MU 是**参考值，不是判据**（13.56 实测两侧）：
+#   st-e   ：3/3 轮读到 "Reached target multi-user.target"
+#   fix6   ：0/6 轮读得到 —— 整份日志里 multi-user 只以 "Stopped target" 出现
+#             5 次，而同一轮 DNS 6/6 通、curl 200 6/6、timeout 0。
+# 也就是说这轮完全健康却读 0。凡是"健康但读 0"的东西都不能当门禁用。
+# 保留它只为出问题时能一眼看出 systemd 走到哪一步。
 MU=$(grep -ac 'Reached target.*multi-user' "$NOANSI" 2>/dev/null); MU=${MU:-0}
 SEEDINST=$(cnt 'HENGE-SEED-V2-INSTALLED')
 
 say
 say "=== 汇总 (net=$NET) ==="
-say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU   seed=$SEEDINST"
+say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU(参考)   seed=$SEEDINST"
 say "TCP 网关: refused=$GW22REF(路径通)  timeout=$GW22BAD"
 say "TCP 外网: ok=$EXT_OK  timeout=$EXT_BAD   (223.5.5.5:80，不依赖 DNS)"
 say "DNS 解析: ok=$DNSOK  fail=$DNSFAIL / 共$DNSDONE"

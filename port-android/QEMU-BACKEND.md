@@ -7580,3 +7580,129 @@ export SLIRP_DNS_SERVER=223.5.5.5    # 或取自 app 的 ConnectivityManager
 | A/B 验证 | ✅ 同一二进制，唯一变量是环境变量 |
 | 非 53 端口仍 ENETUNREACH | ⚠ 与代码预测一致，但错误码语义不准（应为 ECONNREFUSED） |
 | 未做 | ⏳ `tcp80` 的错误码没改（超出本节范围）；`SLIRP_DNS_SERVER` 尚未进 passt 路径（不需要，passt 有 `-D`） |
+
+## 13.56 端到端 6 轮：DNS 从 2/2 失败变成 6/6 成功；顺带拆掉两个仪器
+
+13.55 只证明了"单次 boot 内 DNS 通"。reboot 循环里每轮都通才算数，
+因为每轮都要重新 DHCP、重新起 resolved、重新读 nameserver。
+
+### 一、结果（q-p0a9 + SLIRP_DNS_SERVER，slirp，smp2，6 轮）
+
+| 判据 | 13.53（q-p0a8） | 现在（q-p0a9） |
+|---|---|---|
+| `BEGIN/END` | 2/2 | **6/6**（无半途死） |
+| `DNS-RESOLVE` | **fail=2/2**（`gaierror`） | **fail=0，6/6 得 `101.6.15.130`** |
+| `TCP-GW22` | refused=2, timeout=0 | refused=6, **timeout=0** |
+| `TCP-EXT` | ok=2, timeout=0 | ok=6, **timeout=0** |
+| `CURL-GW` | 200=2/2 | **200=6/6** |
+| `CURL-EXT` | 404×2 | 404×6（HTTP 通） |
+| 任意 `timeout` | 0 | **0** |
+
+每轮 uptime：`172.18 / 100.74 / 104.80 / 103.72 / 102.56 / 101.95` ——
+首轮冷启动 172 s，之后稳定在 ~103 s 的暖复位。
+宿主 `boot_id` 起止都是 `79bc06e8-…`，**机器没重启过**，6 轮都是 QEMU 内部
+guest reboot。
+
+**这一栏是本节唯一重要的数字：DNS 从"每轮必败"变成"每轮必成"，且不是靠
+guest 侧改配置换来的**（seed v3 没动过 DNS 设置，10.0.2.3 照旧下发）。
+
+### 二、⚠ 主机的 `adb shell` 会在长跑中途断掉
+
+跑到第 4 轮（t=595 s）之后，host 侧输出停了，`/tmp/st-fix6.out` 冻结在
+`--- round 4 ---`，而后台任务一直"正在运行"。去设备上一查：
+
+```
+BEGIN=6  END=6        ← 设备侧早就跑完了
+q-p0a9 / passt        ← 进程已经不在了
+```
+
+**不是 QEMU 挂了，是 adb 那条管道断了。**
+
+判据本来就落在设备侧的 serial 日志上，所以数据一个字没丢。但结论要改写成纪律：
+
+> **长跑的读数只认设备侧文件，不认 host 侧 stdout。**
+> 汇总必须能从 `st-<tag>.serial.log` 直接重算，不能依赖脚本"跑完自动打印"。
+
+这一条以前是隐性的（`seedtest.sh` 恰好把日志留在设备上），现在是显性的：
+任何一次长跑，跑完先去设备上按日志重算一遍判据，再采信脚本的汇总。
+
+### 三、⚠ `strip_ansi` 在 toybox 上是个 no-op（第 N 次 ANSI 类问题，新机制）
+
+13.52 写的：
+
+```sh
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$NOANSI" 2>/dev/null; }
+```
+
+**在设备上它一个字节都不剥。** 实测：
+
+```
+in=360734 out=360734      ← 进去多大出来多大
+```
+
+原因：toybox 的 `sed` 不认 `\x1b` 这个转义，把它当普通字符 `x1b` 处理。
+GNU sed 认，所以这条在桌面/CI 上看起来永远是对的。
+
+为什么一直没被发现：**所有判据的 pattern 里都带 `.*`**，
+`Reached target.*multi-user` 里的 `.*` 把中间的 `\033[0;1;39m` 一起吃掉，
+所以读数"碰巧对"。哪天真写一个带锚点的判据，就会静默失效。
+
+可移植写法 —— 用 `printf` 现造 ESC：
+
+```sh
+_esc=$(printf '\033')
+sed "s/${_esc}\[[0-9;]*m//g" "$LOG" > "$NOANSI" 2>/dev/null
+```
+
+实测：`in=360734 out=334628`，SGR 序列全部剥掉。
+
+**自检不能查残留。** 剥完还剩 126 个 ESC 字节 —— 那是光标/清行类序列
+（`ESC[K`、`ESC[6n`），本来就不该被 SGR 规则匹配。查残留必然误报，
+而误报会训练人忽略告警。改用**正对照**：喂一段已知带色码的样本给同一个 sed。
+
+```sh
+_probe=$(printf 'A%s[0;1mB' "$_esc" | sed "s/${_esc}\[[0-9;]*m//g")
+[ "$_probe" = "AB" ] || say "!! strip_ansi 自检失败"
+```
+
+设备实测：
+
+| 写法 | 探针打印 | 判定 |
+|---|---|---|
+| `\x1b`（旧） | `AB` | **FAIL**（字节里带着 ESC） |
+| `printf` 造 ESC（新） | `AB` | OK |
+
+**两种写法在屏幕上长得一模一样。** 这就是为什么必须比字节 ——
+用眼睛验，验不出这个 bug。
+
+### 四、`multi-user` 从判据降级为参考值
+
+`MU=$(grep -ac 'Reached target.*multi-user')` 一直在汇总里当"启动到位"用。
+本轮 6 轮全绿，它读 **0**：
+
+```
+$ grep -ai target | grep -ai user
+      5 [  OK  ] Stopped target multi-user.target - Multi-User System.
+```
+
+整份日志里 `multi-user` 只以 **`Stopped target`** 出现，`Reached target`
+一次都没有（对照：同一份日志里 `Reached target` 有 183 行，其它 target
+每种恰好 6 条 —— 日志没丢）。
+
+而 13.x 的 `st-e` 那次是 **3/3 都能读到 `Reached target multi-user.target`**。
+
+**同一个判据，一次 3/3，一次 0/6，其中 0 的那次一切功能都正常。**
+这种"健康但读 0"的东西不能当门禁。已改成 `multi-user=$MU(参考)`，
+并写明理由 —— 保留它只为出问题时一眼看出 systemd 走到哪一步。
+
+### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 端到端 DNS | ✅ **6/6**（13.53 是 fail=2/2） |
+| 每轮 timeout | ✅ 0 |
+| 半途死 | ✅ 无（BEGIN=END=6） |
+| 宿主机重启 | ✅ 无（boot_id 未变） |
+| adb 长跑断连 | ⚠ 已发生，纪律改为"只认设备侧日志" |
+| `strip_ansi` | ❌ 在 toybox 上是 no-op；已修 + 正对照自检 |
+| `multi-user` | ❌ 一 3/3 一 0/6；已降级为参考值 |
