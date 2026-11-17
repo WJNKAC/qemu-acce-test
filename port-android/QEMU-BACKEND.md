@@ -5301,3 +5301,137 @@ retired_hit=0 / epoch_stale=0`。删掉的是探针，不是信息；
 | 知识未跨边界 | ⚠️ `MEASURE.md:245` 早有同样教训 —— 修法是不让它能再断 |
 | 第六次仪器错误 | ✅ 已由脚本自检兜住，纪律补第五关 |
 
+
+---
+
+### 13.37 nrun v2 建成：8 轮单进程 reset 全通，但序列形态反而**降低**了槽位复用机会
+
+排期第 2 项。基础设施 + 第一个只有序列能看到的信号。
+
+#### 一、通道设计：monitor 的 `system_reset`，不是 guest 内 `reboot`
+
+```
+-monitor tcp:127.0.0.1:4455,server,nowait   →   nc 127.0.0.1 4455  →  system_reset
+```
+
+不用 guest 内 `reboot`：那要先能登录，而登录本身是 C6（重启丢网）的受害者。
+用 monitor 就把"复位"这个动作放在 host 侧，guest 状态完全不影响它。
+
+三个里程碑，成本差一个数量级，决定这个测试能回答什么问题：
+
+| milestone | 判据 | 每轮耗时 | 用来测 |
+|---|---|---|---|
+| `bds` | `BdsDxe: starting` | ~6 s | UEFI 阶段的槽位语义 |
+| `linux` | `Linux version` | **~14 s** | 内核早期、`retired_hit`、多核弱序 |
+| `systemd` | `systemd[1]` | ~110 s | **C6（重启丢网）必须用它** |
+
+`linux` 只要 14 秒是个意外的好消息：`UEFI → GRUB → 内核` 很快，
+之前记的"130 秒到 userspace"里绝大部分是 systemd 及其单元。
+
+#### 二、8 轮实测（vivo V2156FA，q-p0a8，smp2，linux 里程碑）
+
+```
+轮数=8 成功到 linux=8/8        serial lines=2062
+dsusp_cum_ms=1  verdict=VALID   ← 108 秒里只睡了 1ms，序列没有 doze 污染
+retired_hit(总)=0               ← del-epoch 仍未触发
+epoch_stale=0  hw=0  nram=3
+末次: del#2048 del_hit=12 del_miss=2035 ram_reuse=4
+```
+
+**8/8 全过，`retired_hit` ≡ 0。** del-epoch 那个洞在 8 轮序列里依然没被踩到 ——
+与 13.36 的定性一致（by-construction 纵深防御，行为变化未被观测）。
+
+#### 三、★ 序列形态**降低**了槽位复用机会 —— 这一条修正了之前的判断
+
+逐轮的 `ram_reuse` 与 `del_hit`：
+
+| 轮 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| `del_hit` | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| `ram_reuse` | **4** | **4** | **4** | **4** | **4** | **4** | **4** | **4** |
+
+`del_hit` 每轮 +1，`ram_reuse` **从第 2 轮起一动不动**。
+
+原因是 `nomirror[]` 活在 `HengeAccelState` 里，**不随 guest reset 清空**：
+
+```c
+/* henge-accel.c */
+struct { hwaddr pa; uint64_t size; } nomirror[8];
+int      nnomirror;
+```
+
+第 1 轮里 romd 变量存储进过命令模式 → 被拉黑。`system_reset` 只重置 guest，
+不动这个加速器状态 → **第 2 轮一开始这个窗口就在 never-mirror 列表上**，
+`add_ram` 永远不再镜像它，因此**永远不再产生一次槽位复用**。
+
+结论，而且方向和之前的假设相反：
+
+> **跨 boot 序列不是 P0-a 的可观测形态 —— 它让 P0-a 的机会消失了。**
+> 单轮冷启动（`ram_reuse=4`）才是机会最多的形态；
+> 序列里这个数字冻结在第 1 轮的值，之后每轮只有 `del_hit` 在涨、
+> 全打在从不镜像的窗口上（`del_miss` 也同步涨）。
+
+13.34 写"单轮带盘 boot 就够，不需跨 boot 序列"是对的，
+但理由当时给错了（说"单轮已 341 次复用"）。真实理由是：
+**序列会让复用机会归零。** 而且这也解释了为什么 `retired_hit` 在序列里
+更不可能触发 —— 没有复用，就没有"退役后又被占用"的窗口。
+
+这条要记进纪律：**"加长/加轮数"不总是提高暴露概率**，
+如果被测机制依赖某个 per-accelerator 的持久状态，跨 reset 反而会把它冻结。
+
+#### 四、★ RSS 单调上涨：单 boot 测不到的那个问题，出现了
+
+同相位对比（每轮都是"到 `Linux version` 那一刻"）：
+
+| 轮 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| RSS (KB) | 432,860 | 437,372 | 447,676 | 450,304 | 484,836 | 495,592 | 496,216 | **501,840** |
+
+**+68,980 KB（+67 MB，+15.9%）/ 8 轮**，单调上涨，没有平台期。
+
+而 13.34 的单 boot 数据是"涨 ~220MB 后趋平"——**趋平是单 boot 的假象**。
+两个数据合起来才完整：
+
+- 单 boot 内：`788MB → 1,012MB` 后趋平（guest 页表 + 内核镜像工作集）
+- 跨 reset：每轮在同一里程碑处比上一轮高 **4.5–10 MB**
+
+这正是"单 boot 的 RSS 平台期不能外推到多 reset"的实证。
+**但不能就此宣布泄漏** —— 目前只知道它跨轮累积，还不知道在哪一层：
+
+| 假设 | 怎么判 |
+|---|---|
+| QEMU 侧 flatview / dirty bitmap / MemoryRegion 累积 | `-accel henge,stats=5` 看 `blocks held` 是否随轮增长 |
+| JIT 侧 block 元数据 | `HvBlock` 数组是 `max_blocks` 固定，若增长只能是指针/链表 |
+| ROM blob 重复注册（GRUB 每轮加载一次） | 数 `henge: region ...` trace 的 rom 行 |
+| 磁盘 overlay 的 block 层 cache | 换 `-drive cache=none` 对照 |
+
+第 5 轮那个 +34MB 的跳变（明显高于前后）说明增长不是均匀的，
+更像是某种"达到阈值才分配"的结构，而不是每轮固定泄漏。
+
+**这一项不结案，作为排期第 5 项（soak）与第 6 项（重定价）的输入。**
+
+#### 五、三个脚本 bug（都在第一次运行时暴露）
+
+| bug | 现象 | 原因 |
+|---|---|---|
+| `set -- $($H/vclk $QP)` 覆盖 `$1` | tsv 第一列变成 mono_ms，`round1` 的 RSS 取不到 | 函数参数被位置参数覆盖；先存 `RW=$1` |
+| `$($1)` 不重新解析引号 | 每轮报 `timeout`，而 tsv 里 `linux_n` 明明是 1 | `wait_until "cnt 'Linux version'"` 把 `'Linux`/`version'` 当字面参数传给 grep；改成专用 `wait_mile` |
+| `grep -c` 零命中时输出 `0` **且** 返回 1 | `cnt()` 返回两行 `0`，`-ge` 比较炸掉 | 不能写 `grep -c ... \|\| echo 0`，要先接住再 `${n:-0}` |
+
+第三条是 `set -e`/`||` 组合的经典陷阱，值得单独记：
+**`grep -c` 的"0 行"是通过退出码 1 表达的，同时它已经打印了 `0`**，
+所以任何 `|| echo 0` 的兜底都会变成两行输出。
+
+#### 六、这一节之后，梯子搭好了
+
+| 能力 | 状态 |
+|---|---|
+| 单进程连续 reset | ✅ `nrun2.sh`，`linux` 里程碑 14 s/轮 |
+| 序列形态的 RSS 曲线 | ✅ 同相位采样，已抓到 +69MB/8 轮 |
+| 序列形态的全计数器 | ✅ `HV_STATS` 每轮一组，`del_hit`/`ram_reuse`/`retired_hit` 全程可读 |
+| doze 门控 | ✅ `dsusp` 全程 ≤1ms（108 秒） |
+| 三个里程碑的取舍 | ✅ `bds` / `linux` / `systemd`，成本写进用法 |
+| C6 复现 | ⬜ 下一步：`systemd` 里程碑 + 每轮数 DHCP |
+| 多核弱序（C2/C3/C5） | ⬜ 下一步：`smp=4` + `linux` 里程碑 |
+| soak | ⬜ `linux` 里程碑下 14 s/轮，过夜可跑几千轮 |
+

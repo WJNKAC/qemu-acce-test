@@ -1,0 +1,18 @@
+=== nrun2 tag=s1 bin=q-p0a8 rounds=8 smp=2 secs/round=60 ===
+round 1: linux  mile_n=1 systemd_n=0 rss=432860KB
+round 2: linux  mile_n=2 systemd_n=0 rss=437372KB
+round 3: linux  mile_n=3 systemd_n=0 rss=447676KB
+round 4: linux  mile_n=4 systemd_n=0 rss=450304KB
+round 5: linux  mile_n=5 systemd_n=0 rss=484836KB
+round 6: linux  mile_n=6 systemd_n=0 rss=495592KB
+round 7: linux  mile_n=7 systemd_n=0 rss=496216KB
+round 8: linux  mile_n=8 systemd_n=0 rss=501840KB
+
+=== 汇总 (milestone=linux) ===
+轮数=8 成功到 linux=8/8
+serial: lines=2062  mile_n=8  linux_n=8  systemd_n=0
+dsusp_cum_ms=1  verdict=VALID
+rss@mile round1=432860KB  round8=501840KB  delta=68980KB
+retired_hit(总)=0   del 探针行=32
+末次 del 计数: henge: del#2048 defer=1 del_hit=12 del_miss=2035 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+（验收：del_hit 应随轮数增长；retired_hit 必须 0；rss delta 是序列泄漏的唯一读法）
