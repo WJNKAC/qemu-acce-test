@@ -7706,3 +7706,94 @@ $ grep -ai target | grep -ai user
 | adb 长跑断连 | ⚠ 已发生，纪律改为"只认设备侧日志" |
 | `strip_ansi` | ❌ 在 toybox 上是 no-op；已修 + 正对照自检 |
 | `multi-user` | ❌ 一 3/3 一 0/6；已降级为参考值 |
+
+## 13.57 长跑卡死的真凶：输出写进了 adb 管道（不是 guest 卡死）
+
+13.56 记了"adb 管道断了，读数只认设备侧日志"。往下追发现比"断线"严重得多：
+**脚本会永久阻塞在自己的 `echo` 上，连自己的 timeout 都失效。**
+
+### 一、证据：三个脚本过了 timeout 还在跑
+
+```
+$ ps -A -o PID,PPID,ARGS | grep seedtest
+ 9663     1 sh seedtest.sh smoke2 ... 1 0   ...
+25818     1 sh seedtest.sh check3 ... 2 600 ...
+26584     1 sh seedtest.sh v3     ... 2 300 ...
+30821     1 sh seedtest.sh smoke  ... 1 0   ...
+30875     1 sh seedtest.sh check2 ... 2 600 ...
+```
+
+`fix6` 是 `6 900`，02:17 启动，03:20 仍然活着 —— **timeout 早过了 50 分钟**。
+`PPID=1` 说明它们的 adb 会话早就没了，但进程没退出。
+
+原因：每次 `say` 都是往 stdout 写，而 stdout 是 adb 的管道。
+管道对端不读了，`write(2)` 就**阻塞**在缓冲区满之后，
+SIGPIPE 只在**对端关闭**时来 —— adb server 常常是把 socket 留着不读，
+于是既不来 SIGPIPE，也不返回。脚本卡在 `echo` 里，`sleep`/`while` 的时间判断全部停摆。
+
+**"guest 卡死"和"宿主管道卡住"在现场完全同形**，差别只在设备侧 `ps`：
+guest 卡死时 QEMU 还在、脚本还在推进；管道卡住时脚本本身的 `PPID` 变成 1。
+
+### 二、三个叠加的 bug（同一个十行块）
+
+`seedtest.sh` 的监听者那段，三个错误互相掩护，单看任何一个都不致命：
+
+| # | bug | 后果 |
+|---|---|---|
+| 1 | 守卫写 `grep ':2768'` | 10080 是 **0x2760**，写成了 10088 → 守卫恒判"没人听" |
+| 2 | 只查 `/proc/net/tcp` | toybox 的 `nc` **监听在 IPv6**（条目在 `/proc/net/tcp6`，local 全 0）→ 即使端口号对也查不到 |
+| 3 | 子 shell 里 `echo $$ > pidfile` | POSIX sh 里子 shell 的 `$$` 是**父进程** PID（实测外层 29509，`( echo $$ )` 也 29509）→ pidfile 存的是自己的 PID |
+
+第 3 条最阴：cleanup 里 `kill -9 $(cat pidfile)` 就是**自杀**，后面的
+`rm -f $LPFILE` 永远执行不到。现场表现是"端口放了、pidfile 还在"，
+看起来像"只是没清干净"，实际是脚本把自己打死了。
+
+第 1+2 条叠加的后果是每轮都新起一个监听者，而第 3 条保证它收不掉 ——
+**泄漏是必然的，只是慢**。累积到 4 个 `nc`、5 个 `seedtest.sh`，
+下一次跑就撞上 `-monitor tcp:127.0.0.1:4460: Address already in use`。
+
+### 三、改了什么
+
+1. 守卫改用 `printf '%04X' 10080` 算十六进制，并**同时查 `/proc/net/tcp`
+   和 `/proc/net/tcp6`，只认 `st=="0A"`（LISTEN）**。
+2. pidfile 由**父进程**写，内容 `$!`。
+3. cleanup 里拒绝自杀：`[ "$_lp" != "$$" ] && [ "$_lp" != "1" ]`，
+   撞上就明说"pidfile 是本脚本自己的 PID，跳过"。
+4. 正常退出路径改成走 `cleanup`（原来 `kill -9 $QP` + `trap - EXIT`，
+   把 QEMU 杀了却把 cleanup 摘了）。
+5. 新增 `killtree()` 递归收子进程 —— 监听者是 `subshell → timeout → nc` 三层，
+   只杀最外层会让 `nc` 活到自己的 30 s 到期。
+   **递归用位置参数**：POSIX sh 没有 `local`，用 `_p=$1` 会被内层递归覆盖，
+   最后那行 `kill -9` 就杀错进程（第一版就是这个错，读代码发现，不是跑出来的）。
+
+### 四、`rundev.sh`：让长跑与 adb 管道彻底无关
+
+根因是"输出直连 adb"，所以修法是**不让它连**：
+
+```sh
+./rundev.sh start fix7 /data/local/tmp/q-p0a9 2 600 2 /data/local/tmp/seed-v3.iso
+./rundev.sh status fix7
+./rundev.sh collect fix7 ./runs
+./rundev.sh clean  fix7
+```
+
+设备侧是 `setsid sh -c '... > /data/local/tmp/st-<tag>.out 2>&1'`，
+stdin 指向 `/dev/null`。管道断了对它零影响。
+
+`start` 前有两道门禁：
+- 同 tag 的旧进程还活着 → 拒绝启动
+- 设备上还有**任何** `seedtest.sh` 在跑 → 拒绝启动（会抢 4460/10080）
+
+`collect` 会把 serial 日志拉回来**并按判据重算一遍**，不采信脚本的汇总 ——
+汇总可能根本没跑到（管道断、被杀、自杀），而 serial 是 append-only 的。
+
+### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| "guest 卡死" | ❌ 误判；真因是 stdout 写 adb 管道阻塞 |
+| 监听者守卫 | ❌ 十六进制写错 + 只看 tcp4（nc 走 tcp6） |
+| pidfile | ❌ 子 shell `$$` = 父 PID → cleanup 自杀 |
+| 收尾路径 | ❌ 正常退出绕过了 cleanup |
+| killtree 递归 | ⚠ 第一版用 `_p=$1`，会被内层覆盖（读代码时发现） |
+| `rundev.sh` | ✅ start/status/collect/clean，脱离 adb 管道 + 前置门禁 |

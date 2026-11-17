@@ -18,6 +18,10 @@
 #
 # 用法: seedtest.sh <tag> <bin> <max_rounds> [timeout_s] [smp] [seed.iso]
 set -u
+# say 必须在最前面：第 82 行的监听者分支就要用它，
+# 它原先定义在第 183 行 —— 那段代码是"只在端口被占时才走"的分支，
+# 平时不执行，所以一直没人发现它是未定义引用。
+say() { echo "$@"; }
 TAG=${1:?tag}
 BIN=${2:?bin}
 MAXR=${3:-4}
@@ -76,13 +80,33 @@ case "$NET" in
     # host 侧监听：CURL-GW 打的是 10.0.2.2:10080，需要有人在听。
     # 之前靠外面手动起 listen.sh，它挂掉后没人发现 —— 结果 20 轮 curl 全 000，
     # 差点读成"外网全不通"。现在由脚本自己管生命周期。
-    if ! (cat /proc/net/tcp 2>/dev/null | awk '{print $2}' | grep -q ':2768'); then
-        LPFILE=$H/st-$TAG.listen.pid
-        ( echo $$ > "$LPFILE"; while true; do
+    # 端口号别手写十六进制：10080 = 0x2760。这里原来写的是 ':2768'（=10088）。
+    # 而且 toybox 的 nc **监听在 IPv6**（记录在 /proc/net/tcp6，local 全是 0），
+    # 只查 /proc/net/tcp 永远查不到。两个错叠加的结果是：守卫恒判"没人听"，
+    # 每轮再起一个监听者，而收尾又收不掉（见下面 pidfile 那段）。
+    LHEX=$(printf '%04X' 10080)
+    LPFILE=$H/st-$TAG.listen.pid
+    if awk 'NR>1 && $4=="0A" {print $2}' /proc/net/tcp /proc/net/tcp6 2>/dev/null \
+         | grep -qi ":${LHEX}$"; then
+        LREUSE=1
+        say "!! 10080(0x$LHEX) 已被占用 —— 沿用现有监听者。"
+        say "   本轮 curl-GW 的读数不由本脚本担保（可能是上一轮泄漏的 nc）。"
+    else
+        LREUSE=0
+        # ⚠ pidfile 必须由**父进程**写，内容用 `$!`。
+        # 原来是在子 shell 里写 `echo $$` —— 而 POSIX sh 里子 shell 的 `$$`
+        # 是**父进程**的 PID（实测：外层 29509，`( echo $$ )` 也是 29509）。
+        # 于是 pidfile 存的是本脚本自己的 PID，cleanup 里
+        # `kill -9 $(cat pidfile)` 就是**自杀**，后面的 `rm -f $LPFILE`
+        # 永远执行不到 —— 现场就是"端口放了，pidfile 还在"。
+        # 这是第四次同类（前三次：清理循环自杀、"*abtest*" 匹配自身、pgrep -f 自匹配）。
+        ( while true; do
             printf 'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK' \
               | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
+            sleep 1
           done ) >/dev/null 2>&1 &
         LPID=$!
+        echo "$LPID" > "$LPFILE"
         sleep 1
     fi
     # shellcheck disable=SC2086
@@ -106,16 +130,34 @@ case "$NET" in
   *)
     echo "bad NET=$NET (slirp|passt)"; exit 2 ;;
 esac
+# 递归杀子进程。passtlaunch 会 fork 出 passt + qemu；监听者是
+# subshell + timeout + nc 三层 —— `kill -9 父` 只掉最外面那层，
+# nc 会活到自己的 `timeout 30` 到期为止（实测：收尾后还剩 1 个 nc）。
+killtree() {
+    # 用位置参数，不用临时变量：POSIX sh 没有 `local`，
+    # 递归时内层会把外层的 `_p` 覆盖掉，最后那行 `kill -9` 就杀错了进程。
+    # （写了第一版就是这个错，靠读自己的代码发现，不是靠跑出来。）
+    for _k in $(pgrep -P "$1" 2>/dev/null); do killtree "$_k"; done
+    kill -9 "$1" 2>/dev/null
+}
+
 cleanup() {
-    kill -9 $QP 2>/dev/null
+    killtree "$QP"
     # slirp 模式下我们自己起的 host 监听，退出时一并收掉
     # 只按 pidfile 杀，绝不按名字匹配。实测：pgrep -f "nc -l -p 10080" 在
     # 设备上返回 3 个进程 —— 因为外层 sh -c 的命令行里也含这个串，
     # 连 [n]c 字符类都挡不住（整条 sh -c 的命令行是字面量）。
     # 这是第三次同类陷阱（前两次：清理循环自杀、"*abtest*" 匹配到自身）。
-    if [ -n "${LPID:-}" ]; then kill -9 "$LPID" 2>/dev/null; fi
+    if [ -n "${LPID:-}" ]; then killtree "$LPID"; fi
     if [ -f "${LPFILE:-/nonexistent}" ]; then
-        kill -9 "$(cat "$LPFILE" 2>/dev/null)" 2>/dev/null
+        _lp=$(cat "$LPFILE" 2>/dev/null)
+        # 绝不杀自己：pidfile 一旦被写错（本 bug 就是），这条会静默自杀，
+        # 而"自杀"在现场看起来是"脚本正常结束、只是没清干净"。
+        if [ -n "$_lp" ] && [ "$_lp" != "$$" ] && [ "$_lp" != "1" ]; then
+            killtree "$_lp"
+        elif [ "$_lp" = "$$" ]; then
+            say "!! pidfile 里是本脚本自己的 PID（$_lp）—— 跳过，不自杀"
+        fi
         rm -f "$LPFILE"
     fi
 }
@@ -170,7 +212,6 @@ say_bid() { echo "$BID0"; }
 
 set -- $($H/vclk); M0=$1; B0=$2
 SUSP=0
-say() { echo "$@"; }
 
 say "=== seedtest tag=$TAG smp=$SMP max_rounds=$MAXR timeout=${TMO}s ==="
 say "（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）"
@@ -234,7 +275,10 @@ while [ $ELAPSED -lt $TMO ]; do
 done
 
 sleep 2
-kill -9 $QP 2>/dev/null
+# 正常退出也要走 cleanup：原来这里是 `kill -9 $QP` + `trap - EXIT`，
+# 把 QEMU 杀了却把 cleanup 摘掉了 —— 监听者永远不会被收。
+# 收尾比启动更容易漏，因为它不出现在"跑通"的那条路上。
+cleanup
 sleep 1
 trap - EXIT HUP INT TERM
 
