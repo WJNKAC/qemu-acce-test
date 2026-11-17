@@ -1,0 +1,39 @@
+# 上游子仓库。
+#
+# 为什么用 submodule 而不是把内容抄进主仓库：
+#   1. 上游关系不丢 —— 一眼看出 qemu 基于哪个 tag、引擎基于哪个 WindowsiOS commit
+#   2. git log 干净 —— 主仓库的提交只关于"我们做的决定"，不混 70 万行上游代码
+#   3. 可复现 —— 别人 clone + submodule update 就能得到同一起点
+#
+# 我们的改动在哪（重要）：
+#   qemu 的移植层（13 个上游文件修改 + accel/henge/ 整个引擎 + 2 个头）
+#   不在 submodule 里，而在 port-android/patches/0001-henge-port.patch。
+#   理由：submodule 指向的是干净的 upstream commit，patch 让改动可 review、
+#   可 rebase 到新 qemu 版本、也能一眼数出"我们改了多少行"。
+#
+# 初始化：
+#   git submodule update --init            # 全部
+#   git submodule update --init --depth 1  # 只要快照，不拉完整历史（qemu 有 1.1G）
+#   port-android/patches/apply.sh          # 把移植层打上去
+
+[submodule "src/qemu-mainline"]
+	path = src/qemu-mainline
+	url = https://gitlab.com/qemu-project/qemu.git
+	# 钉在 release tag 上，不跟分支漂移：所有实测数据都是对着这个版本取的，
+	# 换版本要重跑一遍基线，不能悄悄跟着 stable-11.1 走。
+	branch = stable-11.1
+
+[submodule "src/mvisor"]
+	path = src/mvisor
+	url = https://github.com/tenclass/mvisor
+
+[submodule "src/WindowsiOS"]
+	path = src/WindowsiOS
+	url = https://github.com/ammaarreshi/WindowsiOS
+	# 引擎（accel/henge/engine/）的 vendored 来源就是这里，见
+	# accel/henge/engine/VENDORED-FROM。升级引擎 = 改这里的 commit
+	# + 重跑 sync-from-upstream.sh。
+
+[submodule "src/WindowsPixel"]
+	path = src/WindowsPixel
+	url = https://github.com/weidu-tpvision/WindowsPixel

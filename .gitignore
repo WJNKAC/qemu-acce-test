@@ -1,13 +1,54 @@
-# 大文件一律不入库：镜像、二进制、构建产物。
-# 目标是追踪"我们改了什么、观察到什么"，不是备份工作区。
+# 主仓库 .gitignore
+#
+# 原则：**只追踪"我们写的"与"我们观察到结论"的东西。**
+#   - 上游代码一律走 submodule，绝不把子仓库的内容抄进来
+#   - 我们的移植改动走 port-android/patches/，不改 submodule 的追踪内容
+#   - 可重建的产物（镜像、构建树、解包的 rootfs）一律不进库
+#
+# 这条规则的由来：第一版把 qemu 的几个源文件逐个 add 进主仓库，
+# 结果是上游关系丢失、git log 看不出改动基于哪个 qemu 版本、
+# 也无法回答"我们到底改了哪些行"。submodule + patch 解决这三个问题。
+
+# ---- 上游子仓库：内容不入库，由 submodule 管 ----
+/src/*/**
+
+# ---- 可重建产物 ----
+# 解包的 Alpine initramfs（20M / 686 文件，含 .so）：由脚本重建
+port-android/initramfs-alpine/
+# QEMU 构建树（几 GB）
+build/
+build-*/
+src/*/build/
+src/*/build-*/
+# 镜像与磁盘
 *.img
 *.qcow2
 *.iso
 *.fd
+*.vmdk
+*.raw
+# 运行日志与采样
 *.log
 *.tsv
-*.png
-*.jpg
-build/
+*.err
+# 二进制产物
+*.o
+*.a
+*.so
+*.dylib
+*.elf
+# 缓存
+cache/
+output/
+
+# ---- 但移植补丁必须入库 ----
+# qemu 自己的 .gitignore 第 21 行有 `*.patch`，这里要反过来。
+!port-android/patches/*.patch
+
+# ---- 运行期生成物 ----
 work/ab-*
-work/*/ab-*
+work/run-*
+work/*.pid
+work/*.serial.log
+work/*.stderr.log
+work/*.sidecar.*
