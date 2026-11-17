@@ -3695,3 +3695,280 @@ qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)          util/qemu-timer.c:656
 | timer 从未 fire | ✅ trace 只有 1 次 recalc，而 fire 必然产生第 2 次 |
 | vm clock 相对墙钟稀释约 22 倍 | ✅ 实测 |
 | 我的 timer mirror 修复从未生效（死代码） | ✅ 已撤销，编译通过 |
+
+
+### 13.25 实测推翻 13.24：vm clock 正常，我的"22 倍稀释"是算术错误
+
+用户指出三件事，全部成立：
+
+1. `cpu_ticks_enabled` 我没实测就归因了
+2. tk 与短窗口两份探针互相矛盾（一个说落后 22 倍，一个说同速）
+3. 方案 A 有语义风险（绕过 pause/resume）
+
+按建议先花五分钟读这个标志。
+
+#### 一、实测：`cpu_ticks_enabled` = 1，vm clock 正常
+
+探针加在 `cpu_enable_ticks()` / `cpu_disable_ticks()` 的赋值处
+（只在开关真正翻转时打印），并在 `henge_tick_delta24` 每次采样时读它：
+
+```
+hv-ticks: ENABLE  wall=110231.115s caller=0x5588e52d14
+hv-tick:  n=1 virt=0.011 rt=110231.126 ticks_on=1 vctl=0 vcval=0.000s
+hv-tick:  n=401 virt=6.266 rt=110237.381 ticks_on=1 vctl=1 vcval=133.100s
+```
+
+- `cpu_enable_ticks()` **被正常调用了一次**（vm_start 走了，没被绕过）
+- **`ticks_on=1`**：vm clock 在累积
+- `rt - virt` = 110231.126 - 0.011 = 110231.115，**恰好等于 ENABLE 那一行的 wall**
+  → `virt` 就是 `rt - 起点`，**两者严格同速**
+
+**13.24 的"vm clock 停走 / 稀释 22 倍"整个作废。**
+
+#### 二、"22 倍"是怎么来的：我算错了时间
+
+我把 `11:29:38 → 11:31:46` 当成了 128 秒。实际是 **10 秒**。
+
+```
+11:31:46 - 11:29:38 = 2 分 8 秒？  错——分位借位算成了 128 秒
+实际 = (11*60+31+46/60) - ... = 10 秒
+```
+
+10 秒墙钟内 virt 走 6.3 秒，差 3.7 秒 ≈ QEMU 启动耗时（加载 2GB RAM + pflash）。
+**完全正常。** 这个错误让一个正常现象看起来像 22 倍稀释，并被我当成了根因。
+
+#### 三、方案 A 撤回（用户判断正确）
+
+`get_virtual_clock` 的设计意图就是让加速器实现 pause/resume 感知的时钟。
+KVM 和 TCG **都不实现它**，走 `cpu_get_clock()` fallback，靠
+`cpu_ticks_enabled` 表达"VM 停走"。henge 若 override 成 REALTIME，
+monitor 的 stop/cont、snapshot、将来的 migration 全拿到错误时钟。
+
+**既然实测 fallback 正常工作，A 既不必要也有害。**
+
+#### 四、另一处误判纠正：`3h3h` 不是乱码
+
+```
+$ cat -A s1.serial.log | tail
+Image type X64 can't be loaded on AARCH64 UEFI system.^M$
+^[[2J^[[01;01H^[[=3h^[[2J^[[01;01H^[[2J^[[01;01H^[[=3h^[[2J^[[01;01H
+```
+
+`3h3h` 是 **`ESC[=3h`**（ANSI 设置显示模式）被 grep 截断后的样子，
+`ESC[2J` 是清屏、`ESC[01;01H` 是光标归位。
+
+**这是 UEFI Shell 在正常刷新屏幕。** 13.20 里我据此判断
+"guest 写出的值就是错的，指向翻译/内存损坏，是 P0 的症状现场"——
+**这个判断作废，12 行档不是 P0 的症状。**
+
+#### 五、timer 确实 fire 过（db run 的完整序列）
+
+```
+hv-tick n=1    virt=0.011  vctl=0  vcval=0
+hv-tick n=401  virt=6.266  vctl=1  vcval=133.100s  delta=126.834s
+
+arm_gt_recalc:     next tick 0x1414be07            (= 5.39s)
+arm_gt_recalc:     next tick 0xffffffffffffffff    ← ISTATUS=1 的路径
+arm_gt_update_irq: irqstate 1                      ← 中断真的拉高
+arm_gt_recalc:     next tick 0x1efd67d3f           (= 133.3s)
+arm_gt_update_irq: irqstate 0
+```
+
+**fire → IRQ → guest 响应 → 写新 deadline，四条路径全部走通。**
+`arm_gt_vtimer_cb → gt_recalc_timer` 的第二次 recalc 就是 fire 的证据。
+
+#### 六、不是 SMP 的 stw 竞态
+
+单核（`-smp 1`，`taskset -c 0`）同样停在 11 行，`tick=1`（WFI < 400 次）。
+`stop_the_world()` 的 lost-wakeup 窗口只在多核有意义，单核排除。
+
+（顺带记下：`wait_while_off()`（dispatch.c:886）确实有 lost-wakeup 窗口——
+`p->wake_pending = 0` 在 `pthread_cond_wait` **之前**清零，
+CPU_ON 若落在清零与入睡之间会丢信号。这是真实缺陷，但不是当前卡住的原因。）
+
+#### 七、vCPU 处于正常 WFI 循环，不是死锁
+
+```
+CPU 0/Henge: wchan=futex_wait_queue_me syscall=98 on-cpu=4.24s slices=608
+```
+
+`slices=608` = 被唤醒 608 次，`futex_wait_queue_me` 就是 `cond_wait`。
+**它在正常睡/醒，不是卡在某个不可返回的等待上。**
+
+#### 八、serial 在推进，只是极慢
+
+严格时间序列（`b-old`，2 核，无 tick 探针干扰，只开 timer trace）：
+
+| 时刻 | 距启动 | serial 行 | recalc | irqstate 1 |
+|---|---|---|---|---|
+| 12:50:07 | 63s | 1 | 0 | 0 |
+| 12:51:08 | 124s | 4 | 0 | 0 |
+| 12:52:09 | 185s | 10 | 1 | 0 |
+| 12:53:10 | 246s | 12 | 1 | 0 |
+| 12:53:25 | 261s | 12 | 1 | 0 |
+
+**1 → 4 → 10 → 12：单调增长，约 3–6 行/分钟。** 然后停在 12。
+
+对照：昨天 09:00 的 wf（`b-old`，300s）走到了 **20 行并进 Shell**。
+按 12 行/246s 的速率，300s 到 20 行是**在边缘**——
+这解释了为什么同一二进制时通时不通：**就是慢，慢到在窗口边界上抖。**
+
+#### 九、修正后的结论
+
+| 13.24 的说法 | 现在的实测 |
+|---|---|
+| vm clock 停走，稀释 22 倍 | ❌ `ticks_on=1`，virt 与 rt 严格同速 |
+| 需要实现 `get_virtual_clock`（方案 A） | ❌ 不需要，fallback 正常，A 有害 |
+| timer 从未 fire | ❌ fire 过（irqstate 1 + 3 次 recalc） |
+| 3h3h 是翻译/内存损坏（P0 症状） | ❌ 是 ANSI `ESC[=3h`，Shell 刷屏 |
+
+**仍然成立**：R1 的长时间零增长（那是真的 380 秒）；`slept` 计数高；
+4/12/20 三档分布；10ms cap 导致每秒约 100 次唤醒。
+
+**新问题（这才是真问题）**：
+boot 速率约 3–6 行/分钟，而通过需要 20 行 → **临界在 300–400 秒**。
+为什么这么慢？两个候选，都还没测：
+
+| 候选 | 判据 |
+|---|---|
+| 10ms cap 导致每 10ms 唤醒一次、每次唤醒都有成本 | 若 deadline 远大于 10ms，应睡到 deadline 而不是 10ms；当前代码硬 cap 在 240000 tick (10ms) |
+| JIT 本身在这台设备上就是这个速度 | 与 TCG 对比：TCG 到 Shell 需要多久？ |
+
+**下一步不写修复，先量这两条。**
+
+
+### 13.26 ★★★★ 真根因：设备 suspend 冻结 CLOCK_MONOTONIC，guest 被一起冻住
+
+13.25 用实测否掉了我的 vm-clock 理论，但留下一个新矛盾：
+**ts 的 deadline 只有 124.2 秒，跑了 410 秒仍不 fire。**
+顺着这个矛盾查下去，找到了整个 flaky 史的真根因——**它不在我们的代码里。**
+
+#### 一、矛盾的形状：guest 只跑了 13 秒
+
+`lv` run 的探针（同时打印 virt 与 rt）：
+
+```
+hv-tick n=401  virt=6.208  rt=110287.921  vcval=85.766s  delta=79.558s
+hv-tick n=801  virt=8.645  rt=110290.358  vcval=85.766s  delta=77.121s
+          增量:  +2.437         +2.437                    -2.437
+```
+
+**virt 与 rt 增量完全相同 → vm clock 严格按墙钟走，没有 bug。**
+但这一轮我从启动到读取等了 366 秒，而 `vm_start` 到当前只过了 13.2 秒：
+
+```
+now(mono)     = 110294.9
+vm_start(mono)= 110281.7   ← hv-ticks ENABLE 打印的 wall
+guest 已运行  = 13.2 秒       而真实等待 366 秒
+```
+
+**差 353 秒。** 两个时钟同速，但总量对不上 → 说明有一个时钟在某些时段**整体停走**。
+
+#### 二、根因：`CLOCK_MONOTONIC` 在设备 suspend 时停
+
+```
+MONOTONIC = 110296.5s  (30.64h)
+BOOTTIME  = 181570.5s  (50.44h)
+差 71274 秒 = 19.8 小时
+```
+
+**这台设备累计 suspend 了 19.8 小时。**
+
+现场验证（本地真实间隔 30 秒，两次远端采样）：
+
+```
+T0  M=110299.53  B=181644.56
+T1  M=110300.51  B=181675.27
+    M 增量 = 0.98 秒     ← 只走了 1 秒
+    B 增量 = 30.71 秒    ← 真实 30 秒
+```
+
+**30 秒真实时间里，MONOTONIC 只走了 0.98 秒 —— 设备在 suspend，97% 的时间是冻的。**
+
+而 QEMU 的时钟正是 `CLOCK_MONOTONIC`（`include/qemu/timer.h:838`）：
+
+```c
+static inline int64_t get_clock(void)
+{
+    if (use_rt_clock) {
+        clock_gettime(CLOCK_MONOTONIC, &ts);   /* ← suspend 时停走 */
+        return ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    }
+    ...
+}
+```
+
+#### 三、完整因果链
+
+```
+Android 屏幕关闭 / doze → 设备 suspend
+  → CLOCK_MONOTONIC 停
+  → QEMU 的 vm clock 停（cpu_get_clock = offset + get_clock()）
+  → guest 的 CNTVCT / 所有 timer deadline 一起停
+  → 同时 vCPU 线程被冻结，schedstat 不动
+  → 观测窗口在真实时间里流逝，但 guest 时间几乎不前进
+  → timer 的 85 秒 deadline 需要 85 秒 MONOTONIC
+     而 MONOTONIC 每 30 秒真实时间只走 1 秒 → 需要约 2550 秒真实时间
+  → 所有窗口（240–600 秒）都在 fire 之前结束
+```
+
+**这同时解释了历史上所有"异常"：**
+
+| 现象 | 原来的解释 | 真因 |
+|---|---|---|
+| R1 的 380 秒零增长 | guest 死等中断 | 全程 suspend，guest 冻结 |
+| slept 计数很高但 serial 不动 | timer 不 fire | suspend 期间引擎也在 park |
+| 22 倍"稀释"（13.24） | vm clock 有 bug | **真实稀释，由 suspend 造成** |
+| 同一二进制时通时不通 | 竞态 | **取决于运行时设备是否醒着** |
+| 12 行档停住 164 秒 | P0 症状 | 那 164 秒设备在 suspend |
+
+#### 四、决定性对照实验
+
+拿到 wakelock（`termux-wake-lock`）后先验证时钟恢复：
+
+```
+真实间隔 20 秒 → M 增量 20.53 秒   ✅ 不再停走
+```
+
+然后同一配置跑一遍（`b-old`，2 核，无探针）：
+
+| 条件 | 真实耗时 | serial 行 | BdsDxe | 结果 |
+|---|---|---|---|---|
+| 无 wakelock | 366s | 12 | 0 | 卡在 `Image type X64` |
+| **有 wakelock** | **127s** | **20** | **2** | **到 `Shell>`** ✅ |
+
+**127 秒进 Shell，而之前 366 秒还在 12 行。** 差别只有一个变量：设备是否 suspend。
+
+#### 五、修复方向
+
+| 场景 | 做法 |
+|---|---|
+| **测试（立即）** | 跑之前 `termux-wake-lock`，跑完 `termux-wake-unlock` |
+| **产品（Android app）** | 持有 `PARTIAL_WAKE_LOCK`（前台服务 + wakelock），必须 |
+| **产品（可选，更彻底）** | QEMU 改用 `CLOCK_BOOTTIME`（含 suspend 时间），但要评估对 RTC/watchdog 的影响 |
+
+**注意第三种要谨慎**：改用 BOOTTIME 会让 guest 在 suspend 后看到时间"跳变"，
+等同于真实硬件行为（真实设备的 generic timer 在 suspend 时也是停的，
+靠 RTC 补）。直接用 wakelock 更贴近"设备一直在运行"的语义。
+
+#### 六、这一轮真正学到的东西
+
+1. **两份时钟数据同速但总量对不上 → 去找"停走"而不是"变慢"。**
+   virt 与 rt 增量严格相同这个事实，排除了所有"频率换算"类假设。
+2. **`/proc/uptime` 读不到时，`CLOCK_MONOTONIC` vs `CLOCK_BOOTTIME` 的差
+   就是 suspend 的累计量**，一个 syscall 就能查。
+3. **移动设备上所有基于 CLOCK_MONOTONIC 的计时都会在 doze 时失真**，
+   而 QEMU 整条时钟链都建在它上面。
+4. 我的前三次归因（写侧缺失 / vm clock 有 bug / 需实现 get_virtual_clock）
+   全部错，共同点是**没有先确认"时间本身是否连续"**。
+
+#### 七、连带作废的结论
+
+| 编号 | 结论 | 状态 |
+|---|---|---|
+| 13.16 | QEMU 侧 cval 恒为 0，timer 从未 arm | ❌ 错（seam 调了 writefn） |
+| 13.18 | 写侧 mirror 修复，slept 降 400 倍 | ❌ 死代码，从未生效 |
+| 13.19 | 所有权"分裂" | ❌ 统一在 QEMU（`sysreg_external=1` 是设计） |
+| 13.20 | 4/12 行档是 P0 症状现场 | ❌ `3h3h` 是 ANSI `ESC[=3h` |
+| 13.24 | vm clock 停走需实现 get_virtual_clock | ❌ fallback 正常，A 有害 |
+| **13.26** | **设备 suspend 冻结 MONOTONIC** | ✅ **实测 + 对照实验** |

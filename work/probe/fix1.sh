@@ -10,6 +10,13 @@
 #
 # 注意 trace=irq 会打印每一条 "hv_run returned"，量大，只用于短窗口诊断。
 set -u
+
+# ---- 设备 suspend 会让 CLOCK_MONOTONIC 停走，guest 被一起冻住 ----
+# 实测：30 秒真实时间里 MONOTONIC 只走 0.98 秒（97% 在 suspend），
+# 结果是 guest 的 85 秒 timer deadline 要等约 2550 秒真实时间。
+# QEMU 的 get_clock() 用 CLOCK_MONOTONIC，所以设备一睡 guest 就停。
+# 每个跑实验的脚本都必须先拿 wakelock，否则测的是"设备睡了多久"。
+termux-wake-lock 2>/dev/null || true
 H=${H:-/data/data/com.termux/files/home/h}
 TAG=${1:-fx}
 SECS=${2:-240}

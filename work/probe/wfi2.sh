@@ -17,6 +17,13 @@
 #   - 必须跑够长：上一次只跑到 serial=4 行就收工，那时还早得很
 #   - stderr 单独落文件，不与 serial 共用
 set -u
+
+# ---- 设备 suspend 会让 CLOCK_MONOTONIC 停走，guest 被一起冻住 ----
+# 实测：30 秒真实时间里 MONOTONIC 只走 0.98 秒（97% 在 suspend），
+# 结果是 guest 的 85 秒 timer deadline 要等约 2550 秒真实时间。
+# QEMU 的 get_clock() 用 CLOCK_MONOTONIC，所以设备一睡 guest 就停。
+# 每个跑实验的脚本都必须先拿 wakelock，否则测的是"设备睡了多久"。
+termux-wake-lock 2>/dev/null || true
 H=${H:-/data/data/com.termux/files/home/h}
 TAG=${1:-wf}
 SECS=${2:-300}

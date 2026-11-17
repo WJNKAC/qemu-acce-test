@@ -11436,10 +11436,10 @@ index 0000000000..bc81c7bcb3
 +type_init(henge_type_init);
 diff --git a/accel/henge/henge-cpu.c b/accel/henge/henge-cpu.c
 new file mode 100644
-index 0000000000..a8a4b97a15
+index 0000000000..c7a5257088
 --- /dev/null
 +++ b/accel/henge/henge-cpu.c
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,701 @@
 +/*
 + * Henge accelerator: the QEMU-side half of the bridge (registers)
 + *
@@ -12008,61 +12008,6 @@ index 0000000000..a8a4b97a15
 +
 +    now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 +    now_guest = muldiv64(now_ns, freq, NANOSECONDS_PER_SECOND);
-+
-+    /*
-+     * HV_TICK_TRACE: 每次 WFI 决策打一行 (now_guest, cval, delta)。
-+     *
-+     * 这个探针只为回答一个问题：**QEMU 的 virtual clock 在 vCPU park 期间
-+     * 到底走不走**。
-+     *
-+     * 背景：trace 已证明 guest 写了 cval（arm_gt_recalc 打印 next tick），
-+     * 而 arm_gt_vtimer_cb 到期时会再调一次 gt_recalc_timer —— 也就是说
-+     * timer 真的 fire 了，trace 里必然出现第二次 recalc。实测只有一次，
-+     * 说明从未 fire。两种可能：
-+     *   (a) virtual clock 停了 → now_guest 不涨 → delta 恒定 → 永远不到期
-+     *   (b) clock 在走，但 cval 被写成了一个极远的值
-+     * 看 delta 的时间序列就能分清：减到 0 却不 fire 是 (b) 之外的第三种，
-+     * delta 恒定就是 (a)。
-+     */
-+    if (getenv("HV_TICK_TRACE")) {
-+        static uint64_t calls, last_print_ns;
-+        calls++;
-+        /* 每 ~500ms 打一次，避免把日志冲爆 */
-+        if (now_ns - last_print_ns > 500000000ull) {
-+            uint64_t vctl = env->cp15.c14_timer[GTIMER_VIRT].ctl;
-+            uint64_t vcval = env->cp15.c14_timer[GTIMER_VIRT].cval;
-+            int64_t d = (int64_t)(vcval - now_guest);
-+            /* 两个时钟并排：这是判"vm clock 是否落后墙钟"的唯一直接证据。
-+               QEMU_CLOCK_REALTIME 按墙钟走；QEMU_CLOCK_VIRTUAL 按"模拟进行中"
-+               走（cpu_get_clock = cpu_clock_offset + get_clock()，且只在
-+               timers_state.cpu_ticks_enabled 为真时累加）。两者比值的倒数
-+               就是 guest 的时间被稀释的倍数。 */
-+            int64_t rt_ns = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
-+            /*
-+             * cntvoff_el2 is the missing term.  gt_recalc_timer() computes
-+             *     istatus = (count - offset >= cval)   with offset = cntvoff_el2
-+             * while this probe's delta above is (cval - count) with no offset.
-+             * If they disagree -- delta < 0 (deadline passed) yet ISTATUS stays
-+             * 0 -- then cntvoff_el2 != 0 and the two sides are in different
-+             * counter domains.  The engine never writes its own cpu->cntvoff
-+             * (grep: no assignment anywhere), and CNTVOFF_EL2 does not match
-+             * is_timer_ctl() (op1=4, not 3), so it falls through to
-+             * `return -1` in write_reg() -- UNDEF.  Printing both values here
-+             * says whether that is what is happening.
-+             */
-+            fprintf(stderr, "hv-tick: calls=%" PRIu64 " virt=%.3fs "
-+                    "vctl=%" PRIu64 " vcval=%" PRIu64
-+                    " delta=%" PRId64 "(%.3fs) cntvoff_el2=%" PRIu64
-+                    " engine_cntvoff=%" PRIu64 " guest_reads=%" PRIu64 "\n",
-+                    calls, (double)now_ns / 1e9,
-+                    vctl, vcval, d,
-+                    freq ? (double)d / (double)freq : 0.0,
-+                    env->cp15.cntvoff_el2,
-+                    (uint64_t)0,   /* 引擎侧恒 0：sysreg.c 无任何赋值 */
-+                    now_guest);
-+            last_print_ns = now_ns;
-+        }
-+    }
 +
 +    for (t = 0; t < 2; t++) {
 +        int idx = t == 0 ? GTIMER_VIRT : GTIMER_PHYS;
