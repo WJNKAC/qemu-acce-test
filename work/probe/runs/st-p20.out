@@ -1,0 +1,253 @@
+=== seedtest tag=p20 smp=2 max_rounds=20 timeout=2400s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=110s) ---
+  NETPROBE-BEGIN round=1 uptime=96.03
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 2 (t=200s) ---
+  NETPROBE-BEGIN round=2 uptime=60.38
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 3 (t=285s) ---
+  NETPROBE-BEGIN round=3 uptime=60.24
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+--- round 4 (t=375s) ---
+  NETPROBE-BEGIN round=4 uptime=60.67
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 5 (t=465s) ---
+  NETPROBE-BEGIN round=5 uptime=60.29
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+--- round 6 (t=555s) ---
+  NETPROBE-BEGIN round=6 uptime=60.76
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 7 (t=645s) ---
+  NETPROBE-BEGIN round=7 uptime=61.10
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+--- round 8 (t=735s) ---
+  NETPROBE-BEGIN round=8 uptime=60.18
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 9 (t=825s) ---
+  NETPROBE-BEGIN round=9 uptime=60.74
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 10 (t=910s) ---
+  NETPROBE-BEGIN round=10 uptime=60.63
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+--- round 11 (t=1000s) ---
+  NETPROBE-BEGIN round=11 uptime=60.59
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 12 (t=1090s) ---
+  NETPROBE-BEGIN round=12 uptime=60.82
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 13 (t=1180s) ---
+  NETPROBE-BEGIN round=13 uptime=60.36
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 14 (t=1270s) ---
+  NETPROBE-BEGIN round=14 uptime=60.57
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 15 (t=1355s) ---
+  NETPROBE-BEGIN round=15 uptime=61.06
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 16 (t=1445s) ---
+  NETPROBE-BEGIN round=16 uptime=60.73
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 17 (t=1535s) ---
+  NETPROBE-BEGIN round=17 uptime=60.25
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 18 (t=1620s) ---
+  NETPROBE-BEGIN round=18 uptime=60.65
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 19 (t=1710s) ---
+  NETPROBE-BEGIN round=19 uptime=60.85
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 20 (t=1800s) ---
+  NETPROBE-BEGIN round=20 uptime=60.45
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+
+=== 汇总 ===
+轮次: BEGIN=20  END=19   ci-info=20   multi-user=20   seed_installed=1
+地址行: 40   curl200=0/19   TCP: 连上=20 拒绝=20(RST=网络通) 超时=0
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=0  verdict=VALID
+完整性: BEGIN=20 != END=19  ⚠ 有轮次中断
+passt: 地址=enp0s1 169.254.2.1/8  网关=192.168.1.1  （应分别为 169.254.x/8 与宿主真实网关）
+boot_id: 起始 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6   结束 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+★ per-instance 坑已绕过：第 20 轮仍在跑（cloud-init 模块早已失效）

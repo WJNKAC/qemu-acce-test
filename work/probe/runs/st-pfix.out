@@ -1,0 +1,47 @@
+=== seedtest tag=pfix smp=2 max_rounds=3 timeout=320s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=110s) ---
+  NETPROBE-BEGIN round=1 uptime=98.18
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+--- round 2 (t=205s) ---
+  NETPROBE-BEGIN round=2 uptime=61.28
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 3 (t=290s) ---
+  NETPROBE-BEGIN round=3 uptime=60.88
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+
+=== 汇总 ===
+轮次: BEGIN=3  END=3   ci-info=3   multi-user=3   seed_installed=1
+地址行: 6   TCP: 连上=3 拒绝=3(RST=网络通) 超时=0
+curl: 200=0 000=3 / 共3   host-10080=DOWN（10080 无监听 => 000 不算网络故障）
+判读: 超时=0 才是网络可疑信号；000 若因 host 监听缺失则与本项无关
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=0  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+passt: 地址=enp0s1 169.254.2.1/8  网关=192.168.1.1  （应分别为 169.254.x/8 与宿主真实网关）
+boot_id: 起始 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6   结束 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+★ per-instance 坑已绕过：第 3 轮仍在跑（cloud-init 模块早已失效）

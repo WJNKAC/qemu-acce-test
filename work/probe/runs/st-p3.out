@@ -1,0 +1,32 @@
+=== seedtest tag=p3 smp=2 max_rounds=2 timeout=260s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=110s) ---
+  NETPROBE-BEGIN round=1 uptime=94.50
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-DNS53 state=ok
+--- round 2 (t=195s) ---
+  NETPROBE-BEGIN round=2 uptime=60.53
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+
+=== 汇总 ===
+轮次: BEGIN=2  END=1   ci-info=2   multi-user=2   seed_installed=1
+地址行: 4   curl200=0/1   TCP: 连上=2 拒绝=2(RST=网络通) 超时=0
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=0  verdict=VALID
+完整性: BEGIN=2 != END=1  ⚠ 有轮次中断
+seedtest.sh[213]: PASST_ADDR: parameter not set

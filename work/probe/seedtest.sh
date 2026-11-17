@@ -145,7 +145,21 @@ while [ $ELAPSED -lt $TMO ]; do
             /NETPROBE-END round=/ && cur == r { exit }
         ' "$LOG" 2>/dev/null | head -20
     fi
-    [ "$RN" -ge "$MAXR" ] && break
+    # 到轮数后不能立刻走：最后一轮可能刚 BEGIN、还没 END。
+    # 这个形态已经出现三次（13.47 的 18/20、13.51 的 2 轮、13.52 的 20 轮），
+    # 根因是 rounds 与 timeout 是两个独立上限，而"末轮的 END"没被算进 timeout。
+    # 现在：达到轮数后，额外等 END 追上 BEGIN（最多 120s），再退出。
+    if [ "$RN" -ge "$MAXR" ]; then
+        EW=0
+        while [ "$EW" -lt 120 ]; do
+            ENDN=$(cnt 'NETPROBE-END')
+            [ "$ENDN" -ge "$RN" ] && break
+            kill -0 $QP 2>/dev/null || break
+            sleep 2; EW=$((EW + 2))
+        done
+        [ "$EW" -ge 120 ] && say "!! 末轮 END 未追平（BEGIN=$RN END=$(cnt 'NETPROBE-END')），等满 120s 退出"
+        break
+    fi
     kill -0 $QP 2>/dev/null || { say "!! QEMU 退出（t=${ELAPSED}s）"; break; }
 
     # 断链检测：180s 无新轮次 = 卡住
@@ -200,7 +214,16 @@ SEEDINST=$(cnt 'HENGE-SEED-V2-INSTALLED')
 say
 say "=== 汇总 ==="
 say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU   seed_installed=$SEEDINST"
-say "地址行: $ADDR   curl200=$C200/$CURLN   TCP: 连上=$OKC 拒绝=$REF(RST=网络通) 超时=$TOUT"
+# curl 的 000 必须拆开：目标是 10.0.2.2:10080（host 侧 nc -l）。
+# 那个监听不在时 curl 拿 000，但这不是网络问题 —— STATES.md 明确要求
+# "单独标注，不并入网络健康度"。第一版把它并进 curl200=0/19，
+# 看着像"20 轮全部外网不通"，实际是 host 侧监听挂了。
+C000=$(cnt 'code=000')
+HOSTLISTEN=up
+[ "$C000" -gt 0 ] && HOSTLISTEN="DOWN（10080 无监听 => 000 不算网络故障）"
+say "地址行: $ADDR   TCP: 连上=$OKC 拒绝=$REF(RST=网络通) 超时=$TOUT"
+say "curl: 200=$C200 000=$C000 / 共$CURLN   host-10080=$HOSTLISTEN"
+say "判读: 超时=$TOUT 才是网络可疑信号；000 若因 host 监听缺失则与本项无关"
 say "探针异常: $PERR（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）"
 say "dsusp_ms=$DS  verdict=$( [ $DS -lt 1000 ] && echo VALID || echo INVALID )"
 if [ "$BEG" -eq "$END" ] && [ "$BEG" -gt 0 ]; then
