@@ -26,6 +26,11 @@ MPORT=${MPORT:-4470}
 NET=${NET:-slirp}
 export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1
 PASST_DNS=${PASST_DNS:-223.5.5.5}
+# 13.54：Android 没有 /etc/resolv.conf，libslirp 的 get_dns_addr() 恒失败。
+# 打过 0002 补丁的二进制支持这个环境变量作为上游来源。默认给 223.5.5.5，
+# 留空 (=SLIRP_DNS_SERVER=) 就回到"没打补丁"的行为，用来做对照。
+SLIRP_DNS_SERVER=${SLIRP_DNS_SERVER-223.5.5.5}
+[ -n "$SLIRP_DNS_SERVER" ] && export SLIRP_DNS_SERVER
 # passt 模式下 resolv.conf 里的 nameserver 就是它。故意允许从外部覆盖，
 # 用来做"把 DNS 指到一个必然超时的地址"这类对照实验。
 KEEP_DISK=${KEEP_DISK:-0}

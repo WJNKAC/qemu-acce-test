@@ -7439,12 +7439,9 @@ NETPROBE-TCP-DNS53 state=refused    ← 10.0.2.3:53 不收 TCP（只做 UDP DNS�
 | `-netdev user,dns=X` | ❌ **是坑** | 见第四节，把 X 整个变成不可达 |
 | 让 libslirp 有 `/etc/resolv.conf` 之外的来源 | ⏳ 需重编 | 见下 |
 
-第三条是根治。成本要先说清：`subprojects/slirp` 是**独立 git 仓库**
-（`subprojects/slirp.wrap` 指向 libslirp.git，qemu 主仓不跟踪它），
-所以它不能进 `patches/0001-henge-port.patch`，要再加一个补丁目标，
-`apply.sh` 得扩成多目标。改动本身约 20 行（`get_dns_addr_resolv_conf()`
-在 `fopen` 失败时回落到一个环境变量），真正花时间的是补丁机制 + 增量重编
-+ 110 MB 重推。**估 45–60 分钟**，不含验证。
+第三条是根治，**已于 13.55 完成**。成本估算是错的：我按"110 MB 二进制重链"估了
+45–60 分钟，实测增量构建 **1.15 秒**（编译 1 个 .o + 打包 libslirp.a + 重链）。
+估错的代价不是浪费时间，是**差点因为"太贵"而不做** —— 这条也记进第七关。
 
 而第一条已经把"装包类验证"解锁了 —— 13.9 记的"需要一条 seed 里
 `systemctl disable --now systemd-resolved` 的绕法"，现在有了更准的一条：
@@ -7461,4 +7458,125 @@ NETPROBE-TCP-DNS53 state=refused    ← 10.0.2.3:53 不收 TCP（只做 UDP DNS�
 | 汇总计数器 | ❌ `err:OSError` 没被任何一栏统计（`探针异常: 0` 而实际 3 条） |
 | 唯一一次 `ok` | ⚠ 未解释，已记录 |
 | 绕法 | ✅ 已验（一次 boot 内 A/B） |
-| 根治 | ⏳ 待做，估 45–60 分钟 |
+| 根治 | ✅ **已做，见 13.55**（增量构建实测 1.15 s，原估 45–60 分钟是错的） |
+
+## 13.55 根治 libslirp：给 `get_dns_addr()` 一个文件之外的来源
+
+13.54 的结论指向一个 20 行的改动。做完了，成本比预估低两个数量级。
+
+### 一、改什么
+
+`subprojects/slirp/src/slirp.c`，`get_dns_addr_resolv_conf()` 的 `fopen` 失败分支：
+
+```c
+    f = fopen(RESOLV_CONF_PATH, "r");
+    if (!f) {
+        const char *env = getenv("SLIRP_DNS_SERVER");
+        struct in_addr a;
+
+        if (af == AF_INET && env && inet_aton(env, &a)) {
+            memcpy(pdns_addr, &a, sizeof(a));
+            return 0;
+        }
+        return -1;
+    }
+```
+
+三点设计取舍：
+
+| 取舍 | 为什么 |
+|---|---|
+| 环境变量，不是配置文件 | Android 的 DNS 在 netd 里，宿主（app）比 libslirp 更清楚当前网络用哪台；不该反过来让 libslirp 去猜 |
+| 只在 `fopen` 失败时生效 | 有 `/etc/resolv.conf` 的系统（桌面、CI）行为一个字不变 —— 不给上游添麻烦 |
+| `af == AF_INET` 才走 | `get_dns_addr_resolv_conf()` 同时服务 IPv6，`in_addr` 塞进 `in6_addr` 是内存越界 |
+
+### 二、补丁机制：第二个目标
+
+`subprojects/slirp` 是**独立 git 仓库**（`slirp.wrap` 指向 libslirp.git，qemu
+主仓不跟踪其内容），所以它进不了 `0001-henge-port.patch`。新增
+`patches/0002-libslirp-dns-env.patch`，`apply.sh` 改成一张目标表：
+
+```
+[henge-port]    已应用（patch 与工作区一致）
+[libslirp-dns]  已应用（patch 与工作区一致）
+```
+
+基线校验跟着分开：qemu 仍是 `005c61c0`，libslirp 是 `26be815b`。
+**两个仓库各自的基线，不能共用一个。**
+
+### 三、成本：估错了两个数量级
+
+| 步骤 | 我估的 | 实测 |
+|---|---|---|
+| 写补丁 + 扩 apply.sh | 20 分钟 | ~15 分钟 |
+| 增量重编 | 20–40 分钟（"110 MB 二进制重链"） | **1.15 秒** |
+| 重推 110 MB | 5 分钟 | 1.5 秒（70 MB/s） |
+| 验证跑一轮 | 5 分钟 | 2.5 分钟 |
+
+```
+$ ninja qemu-system-aarch64
+[1/6] Generating qemu-version.h with a custom command
+[2/4] Compiling C object subprojects/slirp/libslirp.a.p/src_slirp.c.o
+[3/4] Linking static target subprojects/slirp/libslirp.a
+[4/4] Linking target qemu-system-aarch64
+
+real	0m1.151s
+```
+
+**"二进制大 = 重编慢"是错的**：增量构建只编被改的 .o，链接本身 1.6 秒
+（单独实测：删掉二进制再链，`real 0m1.617s`）。
+
+估错的实际代价不是多花的 40 分钟，是**差点因为"太贵"而根本不排这个活**。
+第七关管"数字要带出处"，这一条补上：**成本数字也要带出处，尤其是用来
+决定"做不做"的那个。**
+
+### 四、验证：同一二进制，只差一个环境变量
+
+`q-p0a9`（打过 0002 的 build）连跑两次，唯一差别是 `SLIRP_DNS_SERVER`：
+
+| 判据 | `SLIRP_DNS_SERVER=223.5.5.5` | `SLIRP_DNS_SERVER=`（空） |
+|---|---|---|
+| `udp 10.0.2.3` | **answer:an=2** | timeout |
+| `udpc 10.0.2.3` | **answer:an=2** | timeout |
+| `udperr 10.0.2.3` | **answered** | recv:ENETUNREACH |
+| `tcp53 10.0.2.3` | **ok:answer:an=2** | err:ENETUNREACH |
+| `tcp80 10.0.2.3` | err:ENETUNREACH | err:ENETUNREACH |
+| `getaddrinfo` | **ok:101.6.15.130** | fail:gaierror |
+
+**同一个 110 MB 二进制。** 开着变量 DNS 通，关掉就回到原样 —— 变量只有一个，
+不存在"重编顺手修好了别的东西"这种解释。
+
+`tcp80` 两边都是 `ENETUNREACH`，而且是**预测的**：`sotranslate_out4()`
+的条件是 `so_fport == htons(53) && ...`，那个 `&&` 短路意味着虚拟 DNS 地址
+的非 53 端口永远翻译失败。四次运行（slirp3 / dnsopt / fix0 / fix1）全部吻合。
+
+顺带暴露一个残留：**该地址非 53 端口的错误码不准** —— 语义上那是
+"这个地址只承载 53"，该给 `ECONNREFUSED`；实际给 `ENETUNREACH`
+（因为走的是 `EPERM` → `ICMP_UNREACH_NET`）。不影响 DNS，记在这里。
+
+### 五、现在的状态
+
+| 场景 | 有 `/etc/resolv.conf`（桌面/CI） | 无（Android） |
+|---|---|---|
+| 不设 `SLIRP_DNS_SERVER` | 行为与上游一致 | 仍然坏（与 13.54 相同） |
+| 设 `SLIRP_DNS_SERVER=X` | 环境变量被忽略 | ✅ DNS 走 X |
+
+**默认不设，等于没打补丁。** 这是故意的：不改变任何既有部署的行为，
+要修的人显式打开。
+
+启动脚本里一行：
+
+```sh
+export SLIRP_DNS_SERVER=223.5.5.5    # 或取自 app 的 ConnectivityManager
+```
+
+### 六、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 根因修复 | ✅ 20 行，只动 `fopen` 失败分支 |
+| 补丁机制 | ✅ 第二个目标，各自基线 |
+| 增量构建 | ✅ 实测 1.15 s（原估 20–40 分钟） |
+| A/B 验证 | ✅ 同一二进制，唯一变量是环境变量 |
+| 非 53 端口仍 ENETUNREACH | ⚠ 与代码预测一致，但错误码语义不准（应为 ECONNREFUSED） |
+| 未做 | ⏳ `tcp80` 的错误码没改（超出本节范围）；`SLIRP_DNS_SERVER` 尚未进 passt 路径（不需要，passt 有 `-D`） |

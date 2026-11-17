@@ -1,0 +1,35 @@
+diff --git a/src/slirp.c b/src/slirp.c
+index f26c9871..bbf50124 100644
+--- a/src/slirp.c
++++ b/src/slirp.c
+@@ -444,8 +444,29 @@ static int get_dns_addr_resolv_conf(int af, void *pdns_addr, void *cached_addr,
+     unsigned nameservers = 0;
+ 
+     f = fopen(RESOLV_CONF_PATH, "r");
+-    if (!f)
++    if (!f) {
++        /*
++         * Android 上没有 /etc/resolv.conf（/etc -> /system/etc，该文件不存在），
++         * 所以这个分支在 Android 上是常态而不是异常。
++         *
++         * 直接返回 -1 的后果不是"DNS 查不到"那么温和：调用方
++         * sotranslate_out4() 据此判定虚拟 DNS 地址不可翻译，返回 EPERM，
++         * 于是发往 10.0.2.3 的**所有**包（任何端口）都被打死，
++         * guest 看到的是 TCP=ENETUNREACH / UDP=timeout。
++         * 详见 QEMU-BACKEND.md 13.54。
++         *
++         * 给调用方一个出口：宿主比 libslirp 更清楚当前网络的 DNS
++         * （Android 的 DNS 在 netd 里，从来不在文件里）。
++         */
++        const char *env = getenv("SLIRP_DNS_SERVER");
++        struct in_addr a;
++
++        if (af == AF_INET && env && inet_aton(env, &a)) {
++            memcpy(pdns_addr, &a, sizeof(a));
++            return 0;
++        }
+         return -1;
++    }
+ 
+     DEBUG_MISC("IP address of your DNS(s):");
+     while (fgets(buff, 512, f) != NULL) {
