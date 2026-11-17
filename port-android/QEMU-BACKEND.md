@@ -3163,3 +3163,109 @@ console、agents）大多是 x86 桌面虚拟化的需求，手机上用不到�
 
 既然我们已经在这条 seam 上修了一半（slept 降 400 倍），**路 B 的剩余工作量更小**，
 而且和现有代码同向。路 A 是彻底方案但要重写中断投递。
+
+
+### 13.20 通过率实验：UEFI 根本不需要 timer 也能过 BDS
+
+用户指出两条程序性问题成立：验收三条只落了一条就谈架构；slept 降 400 倍有两种读法。
+补数据后，得到的结论**比"链路是否通"更根本**。
+
+#### 先说最重要的：b-old（未修复）能过 BDS，而且进了 Shell
+
+`run-wf.serial.log`（昨天 09:00，b-old，300s）：
+
+```
+BdsDxe: loading Boot0001 "EFI Internal Shell" from Fv(64074AFE-340A-4BE6-94BA-91B5B4D0F71E)/...
+BdsDxe: starting Boot0001 "EFI Internal Shell" from Fv(64074AFE-340A-4BE6-94BA-91B5B4D0F71E)/...
+UEFI Interactive Shell v2.2
+EDK II
+UEFI v2.70 (EDK II, 0x00010000)
+Mapping table
+map: No mapping found.
+Press ESC in 5 seconds to skip startup.nsh ... Shell>
+```
+
+**未修复、timer 从未 arm、`irq line` 转换 0 次的二进制，走完了整个 BDS 并进了 UEFI Shell。**
+
+这直接推翻 13.16 的模型："UEFI 缺 timer IRQ 所以卡在 BdsDxe 前"不成立。
+UEFI 靠 10ms 兜底在爬，82 秒的开销在 240-300 秒窗口里是**能爬过去的**。
+
+#### 交替重复实验（探针全关，n=9）
+
+| 轮 | 时间 | 二进制 | serial 行 | BdsDxe |
+|---|---|---|---|---|
+| wf | 昨 09:00 | b-old | **20** | **2 ✅ Shell** |
+| r1 | 今 10:18 | b-old | **20** | **2 ✅ Shell** |
+| b1 | 今 10:45 | b-old | 4 | 0 |
+| b2 | 今 10:52 | b-old | 4 | 0 |
+| q1 | 今 10:30 | q-fix | 12 | 0 |
+| q2 | 今 11:02 | q-fix | 4 | 0 |
+| fx | 今 09:35 | q-fix | 12 | 0 |
+| fm | 今 09:40 | q-fix | 12 | 0 |
+| f1 | 今 11:30 | q-fix2 | 4 | 0 |
+
+三个清楚的停点：
+
+| 行数 | 最后一行 | 含义 |
+|---|---|---|
+| **4** | `Error: Image at 000BFB65000 start failed: Aborted` | 更早 |
+| **12** | `Image type X64 can't be loaded...` + `3h3h` | 中 |
+| **20** | `Shell>` | **通过** |
+
+**同一 md5、同一参数、同一组核（cpu0,1 满频），在 4/12/20 三档之间跳。**
+b-old 2/4 通过，q-fix 0/4，q-fix2 0/1 —— 样本不足以判定差异，更不足以宣布修复有效。
+
+#### ★ 我在第一版修复里引入了一个锁 bug（已修正）
+
+`henge_tick_delta24()` 从 `hv_run()` 内部被调用，而 vCPU 线程在
+`henge-accel-ops.c:276` 的 `bql_unlock()` **之后**才进 `hv_run`。
+第一版把它写成"读引擎 + 立即 push 给 QEMU"，于是
+`gt_recalc_timer()` 在**没有 BQL** 的情况下操作了 `QEMUTimer` 和 GIC 的 irq 线。
+
+**这是违反 QEMU 锁顺序的**，很可能就是"修了反而更差"的原因。
+
+修正为两段式：
+
+| 位置 | 动作 | 锁 |
+|---|---|---|
+| `henge_tick_delta24()`（`hv_run` 内） | `hv_engine_peek_vtimer()` 读引擎寄存器，自己算 delta | ✅ 无锁需求 |
+| `henge_push_vtimer()`（`bql_lock()` 之后） | `hv_engine_take_vtimer()` + `arm_henge_set_vtimer()` | ✅ 持 BQL |
+
+`peek` 是新增的只读版本，不清 dirty；`take` 才清。这样：
+- WFI 的 deadline 立刻正确（读到引擎真实 cval）→ slept 降 400 倍的解释成立
+- QEMU 的 timer 在 seam 边界被 arm（持 BQL）→ 不违反锁顺序
+
+#### 这一轮真正学到的东西
+
+| 旧模型 | 新事实 |
+|---|---|
+| UEFI 缺 timer IRQ → 必然卡在 BDS 前 | **错**。b-old 能进 Shell，50% 通过率 |
+| slept 降 400 倍 → 链路已通 | **不成立**。它只说明 deadline 算对了；而且第一版还有锁 bug |
+| 卡住是确定性的 | **错**。4/12/20 三档随机，同参数同 md5 |
+
+**所以"BdsDxe 卡住"与 timer 无关。** timer mirror 修的是一个真实的性能问题
+（每次 WFI 睡满 10ms），但它不是"有时过有时不过"的原因。
+
+"有时过有时不过 + 停在三档不同位置"是**竞态**的形状，与用户早前提出的
+"丢唤醒（park/kick 竞态）"假设吻合：唤醒时机不同 → 推进速度不同 → 停在不同位置。
+
+#### 执行序调整（按用户的分支结构）
+
+现在是"不通"，且**根因不在 timer**。所以：
+
+1. **timer 项关闭**（保留已修的两段式 mirror，锁正确；它解决的是性能不是活性）
+2. **立即回 P0-a / P0-b**（SIGSEGV 级，挂了好几轮）
+3. 卡住的竞态留给 sidecar 长期观测，不再烧单轮实验
+4. 24 MHz 运行时化（`to24_mult` 里的 13e6 也是硬编码，vivo 是 19.2MHz 会踩中）
+
+#### 工具层新增（本轮踩到的）
+
+| 坑 | 现象 | 解法 |
+|---|---|---|
+| Termux `sleep` 不准确 | `sleep 240` 跑 400s 未返回 | 不用脚本内 sleep 控节奏，改"启动即返回"+ 本地控时 |
+| 清理循环自杀（第二次） | `*abtest*` 匹配到自己的 argv | **只读 pidfile**，永不按名字匹配 |
+| 设备无 gdb | P3 的 gdbstub 路线不可用 | 需要代码内打印 GICR_ISENABLER0，或用 -monitor unix: |
+
+#### 进度入库
+
+`git init` 完成，13M，只追踪文档 + 脚本 + 改过的源码文件，已首个 commit。
