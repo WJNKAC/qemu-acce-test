@@ -6262,3 +6262,138 @@ dsusp_ms=0  verdict=VALID
 | 系统盘污染 | ✅ 已清理 + 备份 + 脚本改用副本 |
 | 20 轮成本 | 从 ~40 分钟降到 **~20 分钟**（60s/轮 + 首轮 100s） |
 
+
+---
+
+### 13.46 20 轮门禁的前置：三态判读规则固化、两个过夜陷阱、判据回溯
+
+排期第 3 项开工前，先把"读数怎么翻译"和"过夜会踩什么"钉死。
+这一节的产出大半不是数据，是**规则**。
+
+#### 一、三态判读规则（`work/probe/STATES.md`）
+
+原来只写了"refused 不是不通"，不够。完整的翻译表需要补三条：
+
+**(1) 三态的证明强度是递进的，不是并列的**
+
+| 观测 | 证明什么 |
+|---|---|
+| `ok` | 路径通 **且** 端口有服务 |
+| `refused` | **路径通**（RST 需要完整 TCP/IP 栈：收到 SYN → 查监听表 → 构造 RST → 路由回来。任一环断了只会 timeout） |
+| `timeout` | 路径不通（或对端完全不存在） |
+
+所以 **`ok` 少于 `refused` 不代表网络变差**，只代表端口上没服务。
+
+**(2) 必须按目的端口拆开读**
+
+| 端口 | 谁在听 | `refused` 的含义 |
+|---|---|---|
+| `10.0.2.2:22` | slirp 网关（故意不监听） | **正常** —— 网关可达且无 SSH |
+| `10.0.2.3:53` TCP | slirp 内建 DNS（只做 UDP） | **正常** —— 主机可达，不收 TCP |
+| `10.0.2.2:10080` | host 侧 `nc -l` | **host 监听没起** → host 侧问题，不是网络问题 |
+
+第三条尤其要标出来：10080 的 `refused` **不反映 guest↔slirp 数据面**，
+判读时单独标注，不并入网络健康度。
+
+**(3) 矛盾时的优先级：探针异常 > curl > 三态**
+
+前面那个否决后面那个。`NETPROBE-CURL code=200` 是完整路径证据，强度最高；
+但只要 `PROBE-ERR` / `err:*` 出现，本行读数全部作废（探针自己坏了）。
+
+#### 二、两个过夜陷阱（预埋，不是可选项）
+
+**(1) ColorOS 定时开关机 —— 存在，但当前无活跃点**
+
+实测取证：
+
+```
+com.android.BBKCrontab                存在、已启用、持有 SCHEDULE_EXACT_ALARM
+dumpsys alarm | grep BBKCrontab        0 条  ← 当前无活跃定时任务
+bbk_crontab_used_poweron_count=1       firsttime = 2026-11-10 14:15:03（4 天前用过）
+bbk_poweroff_alarmtime=1714424400000   2024-04-30（历史残留）
+/proc/uptime                           637,978s = 7.4 天，与"11-10 之后没重启"一致
+```
+
+结论：**当前没有活跃的定时关机点**（uptime 7.4 天是硬证据）。
+
+`pm disable-user com.android.BBKCrontab` → `SecurityException: no root permission`。
+按用户硬约束**不用 root**，所以不靠"关掉它"，靠**认出它**：
+
+```sh
+BID0=$(cat /proc/sys/kernel/random/boot_id)
+# 每 5 秒对比；变了就是整机重启，不是 QEMU 的问题
+```
+
+**boot_id 哨兵是比"关掉定时开关机"更根本的防护** —— 即使关了它，
+别的原因也可能让设备重启。哨兵把"进程消失"这个现象**分成两个结论**：
+`boot_id` 不变 = QEMU crash（真发现）；`boot_id` 变了 = 整机重启（环境干扰）。
+
+**(2) `/data/local/tmp` 配额 —— 已腾 6.7G，并加滚动**
+
+清理前的账：目录 16 G，其中 20 个历史 `*.qcow2` 副本（每个 355 MB）+ 两个 asm 日志（77+81 MB）。
+清掉可重建的测试产物后 **16 G → 8.7 G，/data 空闲 104 G → 111 G**。
+基线（`deb12-clean.qcow2` / `vars0.img` / `seed*.iso`）全部保留。
+
+滚动策略：serial 超过 `MAXLOG`（soak 用 8 MB）就 `tail -c` 保留后半。
+
+**注意一个坑**：QEMU 用 `-serial file:` 打开文件后**持有 fd**，
+`mv` 覆盖会让它继续写旧 inode（新文件冻结）。所以滚动只能在
+"本轮刚结束、下一轮还没开始时"做，且滚动后旧 inode 的写入会丢失 ——
+soak 里滚动是为"不让磁盘写满"，不是为了保全历史，可接受。
+
+**(3) 低电量模式（本轮新发现）**
+
+```
+low_power_mode_opened=1     ← 开着！
+```
+
+低电量模式会降频、限制后台，**性能数据全部失真**。已关：
+`cmd power set-mode 0` + `settings put global low_power_mode_opened 0`，
+复查 `low_power_mode_opened=0`。
+
+**(4) 充电状态** —— `USB powered: true`，`stay_on_while_plugged_in=7`（AC|USB|Wireless 常亮），
+`mWakefulness=Awake`。dsusp 实测 20 秒窗口 = **0**。线松一次 dsusp 列就全乱，过夜要固定。
+
+#### 三、判据回溯：#10 与 #9 沿脚本蔓延的检查
+
+**#10（ANSI 切断 systemd 判据）的完整回溯**：
+
+| 脚本 | 原判据 | 问题 | 处置 |
+|---|---|---|---|
+| `nrun2.sh:46` | `Reached target multi-user.target` | **会被 ANSI 切断，永远 0** | 改 `Reached target.*multi-user` + 剥 ANSI |
+| `rssfind.sh:24` | `systemd\[1\]` | 每次 boot 匹配 75 次，**判据不唯一** | 改宽匹配 + 剥 ANSI |
+| `p0run.sh:82` | `systemd\[1\]`（只统计） | 不唯一但非判据 | 保留，标注"非判据" |
+| `vivo-disk.sh:24` | `login:\|systemd\[1\]` | `systemd[1]` 会让 L 提前命中 | 保留原样（历史脚本，已不用） |
+| `seedtest.sh` | 已是剥 ANSI + 宽匹配 | ✅ | — |
+
+**结论**：真正被污染的判据是 `nrun2.sh` 的 `systemd` 里程碑。
+历史影响：`nrun2.sh` 从未用 `systemd` 里程碑跑过（13.37-13.41 用的是 `bds`/`linux`/`net`），
+所以**没有历史读数被污染**。这是运气，不是设计 —— 如果当时用了它，
+会得到"系统从未起来"的错误结论。
+
+**#9（三态语义）的回溯**：`grep -rn "refused\|tcp_ok\|nc -z\|http_code" work/probe/*.sh`
+→ **只有 `seedtest.sh` 做 TCP 探测**，无其他脚本把 `Connection refused` 记作失败。
+**历史读数未被污染。**
+
+#### 四、一条新纪律：跨设备测试不要用 host 时钟判断进度
+
+本轮差点误判"guest 卡死 8 分钟"。真相是：**我把 host 的挂钟时间当成了
+设备侧的进度参照**，而脚本自己打的 `t=` 才是准的
+（round 4 在 `t=360s`，与设备 `date +%s` 完全吻合）。
+
+后果：如果按错误判断去 kill 进程，20 轮会被打断在一个完全正常的运行上。
+
+**纪律：判断设备侧进度，只认脚本自己打的计数器（`t=`/`round=`），
+不认 host 的 `date`。** 两者可以差十几分钟而毫无告警。
+
+#### 五、过夜三分读法（预写，soak 运行后填）
+
+| 观测 | 判读 | 动作 |
+|---|---|---|
+| 全过（几百轮 `refused`/`ok`、无 `timeout`、无探针异常） | "重启不失网"维度成立 | soak 项关闭，锁 commit，进性能重定价 |
+| 出现 `timeout` | **看 round 分布**：前段=warm-up 残留 / 分散=真竞态 / 后段=累积或泄漏。别看总数，画分布 | 按分布形态定位 |
+| QEMU 进程 crash/消失 | **soak 最有价值的发现**，过夜长窗口独有的尾部行为 | 取现场：`boot_id`（区分整机重启）、err 尾 30 行、serial 尾 60 行、`signal\|fatal\|abort` grep |
+
+**soak 不是 20 轮的拉长版。** 它的价值在第三种读法 ——
+所有短窗口都看不见的尾部行为。出现了就比 20 轮任何结果都重要。
+

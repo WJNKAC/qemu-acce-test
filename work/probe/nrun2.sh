@@ -39,11 +39,12 @@ case "$MILE" in
     # 不用 'systemd\[1\]' —— boot 过程中每个 unit 都打一行，里程碑判据
     # 就不唯一了（第一次试跑 round 1 就数到 4，等于没等）。
     #
-    # multi-user.target 在这个镜像上出现得很晚：cloud-init 要走满
-    # 120 秒的 metadata 超时（169.254.169.254 在 slirp 下永远连不通）
-    # 才放行，实测 145 秒时还没到。所以用这个里程碑必须给 >=240s/轮，
-    # 否则每轮都 timeout —— 而 timeout 会被误读成"系统没起来"。
-    systemd) MPAT='Reached target multi-user.target' ;;
+    # 用宽匹配 'Reached target.*multi-user'（剥 ANSI 之后），
+    # 不要写死 'Reached target multi-user.target' —— #10 的原始错误。
+    # 另外：旧 seed 下 cloud-init 会卡 120 秒 metadata 超时（169.254.169.254
+    # 在 slirp 下不可达），multi-user 要到 145 秒后才可能到，
+    # 所以这个里程碑给 >=240s/轮，否则每轮 timeout 会被误读成"没起来"。
+    systemd) MPAT='Reached target.*multi-user' ;;
     *) echo "bad milestone: $MILE (bds|linux|net|systemd)"; exit 2 ;;
 esac
 
@@ -98,7 +99,13 @@ trap cleanup EXIT HUP INT TERM
 
 # grep -c 在零命中时既打印 "0" 又返回 1，所以不能写 `|| echo 0`，
 # 那会得到两行 "0" 让后面的 -ge 比较炸掉。
-cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
+# 去 ANSI 副本。#10 教训：systemd 的 [  OK  ] 行带颜色码，
+# "Reached target ^[[0;1;39mmulti-user.target" 会把 pattern 从中间切断，
+# 于是 grep 'Reached target multi-user.target' 永远为 0。
+NOANSI=$LOG.noansi
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$NOANSI" 2>/dev/null; }
+# 判据统一走 NOANSI；纯文本行（ci-info/linux）不受影响
+cnt() { n=$(grep -ac "$1" "${NOANSI:-$LOG}" 2>/dev/null); echo "${n:-0}"; }
 mon() { printf '%s\n' "$1" | timeout 3 nc 127.0.0.1 $MPORT 2>/dev/null; }
 
 set -- $($H/vclk)
@@ -150,6 +157,7 @@ while [ $ROUND -lt $ROUNDS ]; do
     else
         RES=timeout
     fi
+    strip_ansi
     sample $ROUND
     RSS=$(tail -1 "$SC" | awk '{print $6}')
     # 掉 UEFI Shell 是一个假阳性源：BdsDxe 没找到可引导项时会停在

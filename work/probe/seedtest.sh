@@ -57,11 +57,31 @@ cleanup() { kill -9 $QP 2>/dev/null; }
 trap cleanup EXIT HUP INT TERM
 
 mon() { printf '%s\n' "$1" | timeout 3 nc 127.0.0.1 $MPORT 2>/dev/null; }
+
+# 日志滚动。soak 一夜几百轮 × ~200KB 会写满 /data/local/tmp；
+# 而 Android 的配额失败是静默的（df 显示有空间也可能已达媒体配额）。
+# 策略：超过 MAXLOG 字节就把前半截掉，只留最近一轮的完整记录。
+MAXLOG=${MAXLOG:-4000000}
+roll_log() {
+    sz=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+    [ "$sz" -le "$MAXLOG" ] && return
+    cut=$((sz - MAXLOG / 2))
+    tail -c +$cut "$LOG" > "$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG"
+    echo "## LOG-ROLLED at ${sz}B (kept last $((sz - cut))B)" >> "$LOG"
+}
 cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
 # 去 ANSI 后的日志副本：systemd 的 [  OK  ] 行带颜色码，
 # "Reached target ^[[0;1;39mmulti-user.target" 里 pattern 会被颜色码切断。
 NOANSI=$LOG.noansi
 strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$NOANSI" 2>/dev/null; }
+
+# ---- boot_id 哨兵 ----
+# 唯一能区分"QEMU 崩了"和"整机被重启/关机"的手段。
+# 两者的现象完全一样（进程消失、serial 停止），但结论完全相反。
+# ColorOS 有定时开关机（com.android.BBKCrontab），shell 权限禁不掉
+# （pm disable-user 报 no root permission），所以不靠"关掉它"，靠"认出它"。
+BID0=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+say_bid() { echo "$BID0"; }
 
 set -- $($H/vclk); M0=$1; B0=$2
 SUSP=0
@@ -99,6 +119,16 @@ while [ $ELAPSED -lt $TMO ]; do
         break
     fi
 
+    # 整机重启检测：boot_id 变了 = 不是 QEMU 的问题
+    BIDN=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+    if [ -n "$BIDN" ] && [ "$BIDN" != "$BID0" ]; then
+        say "!! DEVICE-REBOOTED: boot_id 变了（$BID0 -> $BIDN）"
+        say "   这不是 QEMU crash —— 是整机重启/关机（ColorOS 定时开关机？）"
+        say "   最后 5 行 serial："
+        tail -5 "$LOG" 2>/dev/null | sed 's/^/   /'
+        DEVREBOOT=1
+        break
+    fi
     sleep 5
     ELAPSED=$((ELAPSED + 5))
     STALL=$((STALL + 5))
@@ -141,6 +171,8 @@ if [ "$BEG" -eq "$END" ] && [ "$BEG" -gt 0 ]; then
 else
     say "完整性: BEGIN=$BEG != END=$END  ⚠ 有轮次中断"
 fi
+say "boot_id: 起始 $BID0   结束 $(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+[ "${DEVREBOOT:-0}" = 1 ] && say "!! 判定: 整机重启过（不是 QEMU 的问题）"
 if [ "$BEG" -gt 1 ]; then
     say "★ per-instance 坑已绕过：第 $BEG 轮仍在跑（cloud-init 模块早已失效）"
 else

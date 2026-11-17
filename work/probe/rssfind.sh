@@ -21,7 +21,9 @@ MILE=${6:-linux}
 case "$MILE" in
     bds)     MPAT='BdsDxe: starting' ;;
     linux)   MPAT='Linux version' ;;
-    systemd) MPAT='systemd\[1\]' ;;
+    # 不用 'systemd\[1\]' —— boot 中共匹配 75 次，判据不唯一（#10 同类）。
+    # 用剥 ANSI 后的宽匹配。
+    systemd) MPAT='Reached target.*multi-user' ;;
 esac
 
 H=/data/local/tmp
@@ -54,7 +56,9 @@ QP=$!
 cleanup() { kill -9 $QP 2>/dev/null; }
 trap cleanup EXIT HUP INT TERM
 
-cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
+NOANSI=$LOG.noansi
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g' "$LOG" > "$NOANSI" 2>/dev/null; }
+cnt() { strip_ansi; n=$(grep -ac "$1" "$NOANSI" 2>/dev/null); echo "${n:-0}"; }
 mon() { printf '%s\n' "$1" | timeout 3 nc 127.0.0.1 $MPORT 2>/dev/null; }
 
 # 按 VMA 名称聚合 Rss（kB）。无名的记作 [anon]。
