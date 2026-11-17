@@ -3269,3 +3269,79 @@ b-old 2/4 通过，q-fix 0/4，q-fix2 0/1 —— 样本不足以判定差异，�
 #### 进度入库
 
 `git init` 完成，13M，只追踪文档 + 脚本 + 改过的源码文件，已首个 commit。
+
+
+### 13.21 仓库结构：submodule + 移植层补丁
+
+用户指出第一版的 git 用法有结构性问题：把 qemu 的源文件逐个 add 进主仓库。
+那会丢三样东西 —— 上游关系、改动可见性、改动行数。
+
+#### 现在的结构
+
+```
+qemu-acce/
+├── .gitmodules                      # 四个上游，各自钉在 commit 上
+├── src/                             # 全部是 gitlink（160000），内容不入库
+│   ├── qemu-mainline   → gitlab.com/qemu-project/qemu     v11.1.3 / 005c61c0ef
+│   ├── mvisor          → github.com/tenclass/mvisor       8f9f37d
+│   ├── WindowsiOS      → github.com/ammaarreshi/WindowsiOS 0071d69  ← 引擎来源
+│   └── WindowsPixel    → github.com/weidu-tpvision/WindowsPixel c2b39e5
+├── port-android/
+│   ├── patches/
+│   │   ├── 0001-henge-port.patch    # 移植层：55 文件 / 14223 行 / 653 KB
+│   │   ├── apply.sh                 # 带基线校验、--check、--revert
+│   │   └── README.md
+│   └── *.md                         # 全部实测记录
+└── work/probe/*.sh                  # 仪器
+```
+
+`git submodule status` 一眼可读：
+
+```
+ c2b39e5 src/WindowsPixel (heads/main)
+ 0071d69 src/WindowsiOS (heads/main)
+ 8f9f37d src/mvisor (heads/master)
+ 005c61c0ef src/qemu-mainline (v11.1.3)
+```
+
+#### 为什么移植层是 patch 而不是提交进 submodule
+
+| | 提交进 submodule | patch（当前） |
+|---|---|---|
+| 上游关系 | 变成 fork，看不出基线 | submodule 钉在 v11.1.3 |
+| 改动可见 | 埋在 70 万行上游历史里 | `git apply --stat` 一眼看完 |
+| 换 qemu 版本 | rebase 一堆 commit | `git apply --3way` |
+| 主仓库 log | 混入上游提交 | 只有我们的决定 |
+| 改动计数 | 看不出 | **14223 行**是硬数字 |
+
+#### 补丁内容（55 个文件）
+
+| 部分 | 数 | 内容 |
+|---|---|---|
+| 改上游 | 13 | `accel/Kconfig`、`accel/meson.build`、`hw/arm/virt.c`、`meson.build`、`meson_options.txt`、`scripts/meson-buildoptions.sh`、`subprojects/libvhost-user/*`、`system/physmem.c`、`target/arm/{cpu-max.c,cpu.c,helper.c,internals.h}`、`util/oslib-posix.c` |
+| 新加速器 | 40 | `accel/henge/**`（QEMU 侧 half + vendored 引擎，含 `local-edits.patch`） |
+| 新头文件 | 2 | `include/system/henge-{accel,engine}.h` |
+
+#### 验证：在干净树上真的能 apply
+
+```
+$ git worktree add --detach /tmp/qemu-clean-verify v11.1.3
+$ cd /tmp/qemu-clean-verify && git apply 0001-henge-port.patch
+rc=0
+accel/henge 文件数: 39    ✓
+两个头文件:        2     ✓
+关键内容: arm_henge_set_vtimer / henge_push_vtimer / hv_engine_peek_vtimer 全在 ✓
+构建接线: config HENGE / subdir('henge') / option('henge') / virt.c 全在 ✓
+```
+
+#### 顺带踢掉的
+
+`port-android/initramfs-alpine/` 686 个文件 / 20M（解包的 Alpine rootfs，含 `.so`）
+—— 由脚本重建，不该入库。主仓库追踪文件数 **792 → 114**。
+
+#### 基线钉死的理由
+
+`apply.sh` 校验 qemu HEAD 必须是 `005c61c0ef`（v11.1.3）。
+13.1–13.20 的全部测量都是对着这个版本取的，`gt_recalc_timer` /
+`gt_update_irq` 的位置和语义都可能随版本变，而移植层的接线都建在它们上面。
+悄悄跟 upstream 走 = 拿没校准的底座测数据。

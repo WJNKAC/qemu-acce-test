@@ -52,3 +52,7 @@ work/*.pid
 work/*.serial.log
 work/*.stderr.log
 work/*.sidecar.*
+# work/ 下的一次性调试脚本（容器/apt 排障之类），不构成项目的一部分
+work/_*.sh
+work/fix-*.sh
+work/build-qemu-in-container.sh
