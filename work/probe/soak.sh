@@ -39,6 +39,69 @@ case "$HOURS_SEC" in
 esac
 [ "$HOURS_SEC" -gt 0 ] || { echo "soak: HOURS=$HOURS 折算成 $HOURS_SEC 秒，太短"; exit 2; }
 END=$(( $(date +%s) + HOURS_SEC ))
+cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
+
+# ---- 累计计数：滚动时把被丢弃那段的计数搬进 ACC_* ----
+# 原来汇总用"TSV 各列取 max"，那是**错的**：max 只是"某一瞬间的最大值"。
+# 计数器是窗口局部的（roll 之后从 0 重数），所以 max ≈ 首次滚动前的量。
+# 实测 night1：round 峰值 131，max(round) 却记成 66、max(curl200) 也停在 66 ——
+# 看起来像"第 66 轮之后 curl 全坏了"，其实什么都没坏。
+ACC_BEGIN=0; ACC_OK=0; ACC_REF=0; ACC_TO=0; ACC_C2=0; ACC_C0=0; ACC_ERR=0
+
+_cc() { _n=$(grep -ac "$2" "$1" 2>/dev/null); echo "${_n:-0}"; }
+
+roll_log() {
+    sz=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+    [ "$sz" -le "$MAXLOG" ] && return
+    # ⚠ 不能按字节切：`head -c/CUT` 可能切在行中间，那行判据在 head 里是
+    # "NETPROBE-BEG"（不匹配）、在 tail 里是 "IN round=..."（也不匹配）——
+    # **两边都不算，静默少一条**。改成按行切，边界天然对齐。
+    tot=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+    keep=$((tot / 2))
+    [ "$keep" -lt 1 ] && return
+    cut=$((tot - keep))          # cut = 要丢弃的行数
+    head -n "$cut" "$LOG" > "$LOG.head" 2>/dev/null || return
+    tail -n "$keep" "$LOG" > "$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG"
+    ACC_BEGIN=$((ACC_BEGIN + $(_cc "$LOG.head" 'NETPROBE-BEGIN')))
+    ACC_OK=$((ACC_OK    + $(_cc "$LOG.head" 'state=ok')))
+    ACC_REF=$((ACC_REF  + $(_cc "$LOG.head" 'state=refused')))
+    ACC_TO=$((ACC_TO    + $(_cc "$LOG.head" 'state=timeout')))
+    ACC_C2=$((ACC_C2    + $(_cc "$LOG.head" 'code=200')))
+    ACC_C0=$((ACC_C0    + $(_cc "$LOG.head" 'code=000')))
+    ACC_ERR=$((ACC_ERR  + $(_cc "$LOG.head" 'state=err:')))
+    rm -f "$LOG.head"
+    # 自检：滚动后累计量必须只增不减
+    _chk=$((ACC_BEGIN + $(_cc "$LOG" 'NETPROBE-BEGIN')))
+    echo "## ROLLED at ${sz}B 累计BEGIN=$_chk" >> "$LOG"
+}
+
+# ---- 自检：滚动前后累计量必须守恒（SOAK_SELFTEST=1）----
+# 放在这里是为了**在起 QEMU 之前**就能验，且验的是下面这段真代码，
+# 不是另抄一份。没有这一步，"累加器"和"计数器"的口径不一致会静默存在。
+if [ "${SOAK_SELFTEST:-0}" = "1" ]; then
+    T=$(mktemp -d); LOG=$T/log; MAXLOG=1000
+    : > "$LOG"
+    # 行长刻意不一（用 i 控制填充长度），让"按字节切"必然切在行中间。
+    i=0
+    while [ $i -lt 40 ]; do
+        pad=$(printf '%*s' $((i % 7 * 23)) '')
+        echo "NETPROBE-BEGIN round=$i $pad" >> "$LOG"
+        echo "NETPROBE-TCP-GW22 state=ok $pad" >> "$LOG"
+        echo "NETPROBE-TCP-EXT state=ok" >> "$LOG"
+        i=$((i+1))
+    done
+    B0=$(wc -c < "$LOG")
+    roll_log; roll_log; roll_log
+    B1=$(wc -c < "$LOG")
+    CB=$((ACC_BEGIN + $(cnt 'NETPROBE-BEGIN')))
+    CO=$((ACC_OK    + $(cnt 'state=ok')))
+    echo "selftest: 写入 40 轮，日志 $B0 -> $B1 B（MAXLOG=$MAXLOG）"
+    echo "selftest: ACC_BEGIN=$ACC_BEGIN 窗口=$(cnt 'NETPROBE-BEGIN') => 累计 $CB"
+    echo "selftest: ACC_OK=$ACC_OK 窗口=$(cnt 'state=ok') => 累计 $CO"
+    if [ "$CB" = 40 ] && [ "$CO" = 80 ]; then echo "selftest: PASS"; rc=0
+    else echo "selftest: FAIL（应为 BEGIN=40 ok=80）"; rc=1; fi
+    rm -rf "$T"; exit $rc
+fi
 
 for f in "$BIN" "$H/vclk" "$SEED" "$H/deb12-clean.qcow2"; do
     [ -e "$f" ] || { echo "MISSING $f"; exit 3; }
@@ -48,7 +111,16 @@ cp -f $H/vars0.img "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
 cp -f $H/deb12-clean.qcow2 "$DISK" 2>/dev/null; chmod 644 "$DISK" 2>/dev/null
 rm -f "$LOG" "$ERR" "$SC"
 : > "$SC"
-echo "t_s round rss_kb dsusp_cum state_ok state_refused state_timeout curl200 curl000 probe_err lines df_avail_kb" >> "$SC"
+# 列序是契约，后面所有分析脚本按列号取值，只能往后加，不能插在中间。
+# 1 t_s  2 round  3 rss_kb  4 dsusp_cum  5 ok  6 refused  7 timeout
+# 8 curl200  9 curl000  10 err  11 lines  12 df_avail_kb
+# 13 rss_smaps_kb  14 anon_kb  15 threads
+#
+# 为什么 3 和 13 读的是同一个进程却不一样：第 3 列走 /proc/pid/statm
+# （内核 per-mm 的 rss 计数器，会漂），第 13 列走 /proc/pid/smaps_rollup
+# （走页表重算，是地面真值）。实测同一瞬间 1235 MB vs 987 MB，差 250 MB。
+# 两列并排存档，以后再遇到"RSS 涨了"就不用重跑，直接看是哪一列在涨。
+echo "t_s round rss_kb dsusp_cum state_ok state_refused state_timeout curl200 curl000 probe_err lines df_avail_kb rss_smaps_kb anon_kb threads" >> "$SC"
 
 BID0=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 BINMD5=$(md5sum "$BIN" 2>/dev/null | awk '{print $1}')
@@ -103,13 +175,6 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-cnt() { n=$(grep -ac "$1" "$LOG" 2>/dev/null); echo "${n:-0}"; }
-roll_log() {
-    sz=$(wc -c < "$LOG" 2>/dev/null || echo 0)
-    [ "$sz" -le "$MAXLOG" ] && return
-    cut=$((sz - MAXLOG / 2))
-    tail -c +$cut "$LOG" > "$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG"
-}
 
 set -- $($H/vclk); M0=$1; B0=$2
 SUSP=0
@@ -119,7 +184,7 @@ CRASH=0
 DEVRB=0
 
 while [ "$(date +%s)" -lt "$END" ]; do
-    RN=$(cnt 'NETPROBE-BEGIN')
+    RN=$((ACC_BEGIN + $(cnt 'NETPROBE-BEGIN')))
     set -- $($H/vclk $QP); M=$1; B=$2; R=$3
     DM=$((M - M0)); DB=$((B - B0))
     D=$((DB - DM - SUSP)); [ $D -gt 0 ] && SUSP=$((SUSP + D))
@@ -127,7 +192,10 @@ while [ "$(date +%s)" -lt "$END" ]; do
     N=$(grep -acv '^#' "$LOG" 2>/dev/null); N=${N:-0}
     # 最后一列是 err:<Type>，不是 'PROBE-ERR' —— 探针从来没打过那个串，
     # 数它等于永远 0（13.53 在 seedtest.sh 里改过一次，这里漏了，第五次同类）。
-    echo "$((DM/1000)) $RN ${R:--1} $SUSP $(cnt 'state=ok') $(cnt 'state=refused') $(cnt 'state=timeout') $(cnt 'code=200') $(cnt 'code=000') $(cnt 'state=err:') $N ${DF:-0}" >> "$SC"
+    SM=$(awk '/^Rss:/{print $2}' /proc/$QP/smaps_rollup 2>/dev/null)
+    AN=$(awk '/^Anonymous:/{print $2}' /proc/$QP/smaps_rollup 2>/dev/null)
+    TH=$(awk '/Threads/{print $2}' /proc/$QP/status 2>/dev/null)
+    echo "$((DM/1000)) $RN ${R:--1} $SUSP $(cnt 'state=ok') $(cnt 'state=refused') $(cnt 'state=timeout') $(cnt 'code=200') $(cnt 'code=000') $(cnt 'state=err:') $N ${DF:-0} ${SM:-0} ${AN:-0} ${TH:-0}" >> "$SC"
 
     # --- 三类仪器故障 ---
     BIDN=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
@@ -166,27 +234,20 @@ sleep 1
 trap - EXIT HUP INT TERM
 
 # ---- 汇总 ----
-# ⚠ roll_log 会把日志前半截掉，`cnt` 是从当前日志现数的 —— 滚动后数会**倒退**，
-# 于是"整夜跑了多少轮"会被读成最后一屏的量。所以汇总取 TSV 各列的 **max**
-# （每 10 s 采一次快照，滚动前后的峰值即累计量；它仍是下界，不是精确值）。
-# 列序（见文件头）：1 t_s  2 round  3 rss_kb  4 dsusp  5 ok  6 refused  7 timeout
-#                   8 curl200  9 curl000  10 err  11 lines  12 df
-# 只取 2/5/6/7/8/9/10 —— 3、4 不能取 max（rss 会回落，dsusp 本来就是累计量）。
-# 不用 heredoc：它的终止符必须顶格独占一行，而这里原先写成
-# `$(awk ... )EOF` —— 判定为未闭合，脚本静默走完却没产出汇总。
-# set -u 抓不到这种错（不是未定义变量），直接 set -- 最稳。
-set -- $(awk 'NR>1 {
-    if ($2+0 > r) r = $2+0
-    if ($5+0 > m5) m5 = $5+0; if ($6+0 > m6) m6 = $6+0; if ($7+0 > m7) m7 = $7+0
-    if ($8+0 > m8) m8 = $8+0; if ($9+0 > m9) m9 = $9+0; if ($10+0 > m10) m10 = $10+0
-} END { printf "%d %d %d %d %d %d %d", r, m5, m6, m7, m8, m9, m10 }' "$SC" 2>/dev/null)
-RMAX=${1:-0}; OK=${2:-0}; REF=${3:-0}; TO=${4:-0}; C2=${5:-0}; C0=${6:-0}; PE=${7:-0}
-# BEGIN/END 直接数日志只是"当前窗口内"的量（滚动后必然小于 RMAX），留作参照。
-BEG=$(cnt 'NETPROBE-BEGIN'); ENDN=$(cnt 'NETPROBE-END')
+# 累计量 = 滚动累加器 + 当前窗口。**不用 TSV 取 max** —— 那只是某一瞬间的值，
+# night1 上它把 131 轮记成了 66 轮，读起来像"第 66 轮后 curl 全坏"。
+BEG=$((ACC_BEGIN + $(cnt 'NETPROBE-BEGIN')))
+ENDN=$(cnt 'NETPROBE-END')
+OK=$((ACC_OK  + $(cnt 'state=ok')))
+REF=$((ACC_REF + $(cnt 'state=refused')))
+TO=$((ACC_TO  + $(cnt 'state=timeout')))
+C2=$((ACC_C2  + $(cnt 'code=200')))
+C0=$((ACC_C0  + $(cnt 'code=000')))
+PE=$((ACC_ERR + $(cnt 'state=err:')))
 {
 echo "=== soak $TAG 汇总 ==="
-echo "轮次: 累计(TSV max)=$RMAX   当前日志窗口内 BEGIN=$BEG END=$ENDN"
-echo "探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE   ← 均为累计下界"
+echo "轮次: 累计 BEGIN=$BEG (滚动累加 $ACC_BEGIN + 当前窗口 $(cnt 'NETPROBE-BEGIN'))"
+echo "探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE"
 echo "dsusp_cum_ms=$SUSP  $( [ $SUSP -lt 1000 ] && echo VALID || echo INVALID )"
 echo "crash=$CRASH devreboot=$DEVRB"
 echo "bin_md5=$BINMD5  boot_id=$BID0"
