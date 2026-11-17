@@ -6531,3 +6531,149 @@ if (q == RXQ) {
 **排期：插在性能重定价之前。** 因为"性能重定价"如果只用 slirp，
 定出来的数是"慢后端下的可用性"，不是"引擎的能力上限"。
 
+
+---
+
+### 13.48 ★★★★★ 撤回 13.47 的 passt 归因：那是**第四次**错误归因，且我读过证据
+
+先说结论：**13.47 对 passt 的技术诊断全错。修复成本不是"改引擎 notify()"，
+而是 0 行代码 + 一次跨域环境搭建。**
+
+#### 一、错在哪：把一条已被证伪的归因重新写了回去
+
+13.47 我写：
+
+> 根因在 `WindowsiOS/devices/virtio_net.c:15` 的 `notify()` 早退
+> ……passt 不是可选后端，而是暴露引擎缺陷的压力源。
+
+**`FINDINGS.md` 的"归因三次更正"表格里，第 2 条就是这句话，并且已经标为错：**
+
+> | 2 | "我们自己引擎 `devices/virtio_net.c` 的 notify() 拉模型" |
+> **那份代码在 QEMU 移植里根本不参与**。移植的 NIC 是 `hw/net/virtio-net.c`
+> （QEMU 原版，零 henge 引用），我们只提供 accel 和 net backend |
+
+我不仅没读到它，还在同一个仓库里、以"新发现"的语气重写了一遍。
+
+**硬验证**（本轮做的）：
+
+```
+$ ls accel/henge/engine/
+compat  core  host  local-edits.patch  sync-from-upstream.sh  VENDORED-FROM
+
+$ grep -n "engine/" accel/henge/meson.build
+35:    'engine/core',
+36:    'engine/host',
+37:    'engine/compat',
+```
+
+**`engine/devices/` 根本不在端口里编译。** `notify()` 那份代码与 QEMU 端口零关系。
+
+#### 二、真正的根因（FINDINGS.md 早已查明）：passt 的地址参数
+
+| passt 配置 | 6 轮吞吐 | 形态 |
+|---|---|---|
+| `-a 192.168.1.134/24 -g 192.168.1.1` | 295K / 364K / 7.60M / 265K / 540K / 244K | **双峰** |
+| **默认（不给 `-a` / `-g`）** | **6.02M / 8.82M / 7.10M / 4.85M / 8.20M / 7.68M** | **全轮正常** |
+
+`192.168.1.134` 是**宿主 wlan0 上不存在的地址**。passt 拿到一个自己不拥有的地址后
+必须为它做 ARP/邻居代理，失败的连接走超时重传 —— 这就是双峰的来源。
+
+而且**已经做过 TCG 对照**：
+
+| 轮次 | henge + passt | TCG + passt |
+|---|---|---|
+| r1 | 295 K | 175 K |
+| r3 | 7.60 M | 259 K |
+| r5 | 540 K | 128 K |
+| r6 | 244 K | 8.44 M |
+
+**两套加速器同一双峰形态，TCG 甚至更差** → 加速器被排除。
+
+> **所以"passt 吞吐差"这个 bug 不存在。** 正确参数下 passt 中位数
+> **比 slirp 还略好**（6–8.8 MB/s vs 4.9–8.5 MB/s）。
+> 我 13.47 说的"914 B/s 是 bug 值"——那是 **hv-linux 独立 runner**
+> 同一个参数错误的产物，不是引擎缺陷。
+
+#### 三、但"passt 没进测试体系"这一条仍然成立，原因不同
+
+13.47 的**结论**（C6 结案不能外推到 passt）对，**理由**错。
+
+真实障碍是本轮实测出来的 **SELinux 跨域死锁**：
+
+| 域 | 写 `/data/local/tmp` | bind unix socket | 执行 `/data/local/tmp/q-p0a8` |
+|---|---|---|---|
+| **adb shell**（u:r:shell:s0, uid 2000） | ✅ | ❌ **Permission denied**（含 abstract socket） | ✅ |
+| **Termux**（u:r:untrusted_app_27:s0, u0_a343） | ❌ Permission denied | ✅（仅自己 home） | ❌ Permission denied |
+
+实测：
+
+```
+# adb shell 域
+./passt -f -q --socket ./passt.sock
+  → Failed to bind UNIX domain socket: Permission denied
+./passt -f -q --socket @passtabs          # abstract，绕过文件系统
+  → Failed to bind UNIX domain socket: Permission denied   ← 域策略，不是路径
+# Termux 域
+/data/local/tmp/q-p0a8 --version
+  → bash: /data/local/tmp/q-p0a8: Permission denied        ← 跨域执行被拒
+/data/local/tmp/passt
+  → nohup: failed to run command: Permission denied
+```
+
+**所以：passt 只能在 Termux 域跑（能 bind），而 QEMU 现在也在 adb shell 域跑。
+要接起来，QEMU 必须也搬到 Termux 域。** 这才是"passt 没进体系"的真原因 ——
+不是不想测，是**两个进程必须在同一个 SELinux 域**，而现有测试脚本全在 adb shell 域。
+
+这解释了为什么历史上 passt 的成功记录都在 Termux：
+`hv-linux` 独立 runner 在 Termux 跑，passt 也在 Termux 跑，天然同域。
+
+#### 四、修复花费（这是你要的答案）
+
+| 项 | 花费 | 说明 |
+|---|---|---|
+| **代码改动** | **0 行** | bug 不存在：`-a/-g` 参数问题，去掉即可 |
+| **引擎 patch** | **0 行** | 13.47 提的 `notify(RXQ)` 改动**不需要做**，那份代码不参与 |
+| 环境：QEMU 搬到 Termux 域 | **2–4 小时** | ① `q-p0a8`(110MB) + `passt`(418KB) 复制进 Termux home（跨域执行被拒，必须复制）；② 写 Termux 版启动脚本（路径全变）；③ qcow2 可直接读 `/data/local/tmp` 的 644，但 overlay 必须写 Termux home |
+| 验证：一次 boot + 6×curl | **30 分钟** | 判据用 `STATES.md` 三态 + curl 状态码 |
+| **合计** | **半天** | 且是纯环境工作，不碰代码 |
+
+**这个数字比 13.47 说的"改引擎回调"高，但性质完全不同**：
+13.47 是"改一个不存在的 bug"，花费是**无穷**（改不对）；
+现在是"搬一次环境"，花费是**确定的半天**。
+
+#### 五、是否值得做（我的判断）
+
+**不值得现在做，理由有三条，都可以被推翻**：
+
+1. **它不解堵任何已知问题。** slirp 已达 4.9–8.5 MB/s，`curl 200` 18/18 通过。
+   passt 的优势是"用宿主 TCP 栈"，但要等**性能重定价**才知道 slirp 是不是瓶颈。
+   如果 slirp 的数字已经够"日常可用"，passt 是优化不是必需。
+2. **它可能引入新变量。** Termux 域跑 QEMU 会改变整个测试环境
+   （路径、权限、时钟访问），而 18 轮基线刚在 adb shell 域建立。
+   为了一个未证明的收益重搭环境，是在破坏已验证的东西。
+3. **C6 的结论不需要它。** C6 已结案（虚构定级）。"passt 未测"作为
+   **结案范围的限定**已经写进 13.47，这比"补测"更重要且已经完成。
+
+**但有一条让它翻案的条件**：如果性能重定价发现 slirp 是瓶颈
+（比如 `sync_irq` 3 万次/秒被证明卡在 slirp 的同步逐帧上），
+那 passt + Termux 域就从"优化"变成"必要"，那半天就该花。
+
+#### 六、这一节真正的账：同一类错误第 4 次
+
+| # | 案例 | 形态 |
+|---|---|---|
+| 1 | P0-a | 依据是认错地方的真 crash |
+| 2 | doze | 把伪影当信号 |
+| 3 | C6 | 把 AI 输出当数据源 |
+| 4 | **passt（本轮）** | **在同一个仓库里，把一条已标注"为什么错"的归因重新写回去** |
+
+第 4 条比前三条更值得记，因为它**不是知识缺失，是核查缺失**：
+`FINDINGS.md` 那三行就在那里，我却在 13.47 里以"新发现"的语气重写。
+
+**第七关（数字要出处）防的是"外部输入无出处"；
+这一条是"内部已有结论未核查"—— 同一道关的另一半。**
+补一条：
+
+> **写归因之前，先在同仓库里 grep 该现象是否已被归因过。**
+> 已有结论要么引用它，要么给出推翻它的证据，不能装作不存在。
+
