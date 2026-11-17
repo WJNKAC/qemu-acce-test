@@ -4672,3 +4672,104 @@ vivo 的 Termux 进不去：
 | mt6833 vs mt6853 的 JIT 性能 | ❌ 同上 |
 | Android 11 的 `/sys/power/wake_lock` 是否同样有效 | ❌ 同上（这条值得一验，11 和 12 的 suspend 实现不同）|
 | 19.2 MHz 设备的换算验证 | ❌ 手上没有这类设备 |
+
+
+### 13.33 ★★★ vivo 交叉验证完成：跨设备一致，P0-a 在两条线上都不触发
+
+用户给了 vivo 的 SSH 密码（`y76s`，用户 `u0_a343`）。这解开了 13.32 的阻塞。
+
+#### 一、vivo 的环境特点（和 PDYT20 不同，反而更省事）
+
+| | OPPO PDYT20 | vivo V2156FA |
+|---|---|---|
+| SoC / Android | mt6853 / 12 | MT6833V/ZA / 11 |
+| root | ✅ Magisk（`a72`） | ❌ 无 |
+| `/sys/power/wake_lock` | 可写（root） | 不可写（Permission denied，即使 adb shell） |
+| Termux SSH | ✅ 8022 | ✅ **8022（`y76s`）** |
+| 时钟连续性 | 需内核 blocker | **天然连续**（USB 常亮，实测 `dsusp=0.00s`） |
+
+vivo 的 `stay_on_while_plugged_in` 已经是 `7`（插电常亮），所以
+**不需要 root、不需要 suspend blocker，时钟就连续**：
+
+```
+dM=20.00s  dB=20.00s  dsusp=0.00s  → 时钟连续
+累计 suspend = 162957s (45.27h)     ← 历史上的，但当前窗口是 0
+```
+
+#### 二、QEMU 二进制可以直接 `adb push` 到 `/data/local/tmp` 跑
+
+之前以为需要 Termux 的 libc++，实测**不需要**：
+
+```
+INTERP = /system/bin/linker64
+NEEDED = libz.so, libm.so, libdl.so, libc.so     ← 全是 Android 系统库
+```
+
+所以 vivo 上不需要 Termux 环境，`adb push` + `chmod 755` 就能跑。
+（`qemu-img` 没有，overlay 退化成整份复制，vivo 有 113 GB 空闲，无影响。）
+
+#### 三、2×2 交叉矩阵（首次拿到干净数据）
+
+**无盘 → UEFI Shell**（`vboot.sh` / `pboot.sh`，各自跑 3–4 轮）：
+
+| 设备 | q-p0a（含 epoch 修复） | b-old（未修复） |
+|---|---|---|
+| PDYT20 | 14.3 / 14.2 / 14.6 s | 14.6 / 14.6 / 14.7 s |
+| **vivo** | **13.4 / 13.5 / 13.5 / 13.5 s** | **13.4 / 13.6 / 13.5 / 13.6 s** |
+
+**两个二进制在每台设备上时间相同（±0.3s），两台设备之间差 1 秒左右。**
+
+**带盘 → Linux**（`vdisk.sh`，vivo）：
+
+```
+kernel@13.6s   userspace@25.3s   lines=617   bds=2   linux=1
+```
+
+对照 PDYT20 用 `diskrun.sh` 跑到 cloud-init 的 591 行 —— 同一镜像、
+同一二进制，vivo 617 行、PDYT20 591 行，**量级一致**。
+
+#### 四、这个矩阵回答了三件事
+
+**1. doze 的伤害有多大**
+
+| 条件 | PDYT20 到 Shell |
+|---|---|
+| 无任何锁（13.25） | 360 s 只到 12 行 |
+| `termux-wake-lock`（13.30） | 停在 12 行，sidecar 只采 1 行 |
+| **内核 suspend blocker（本轮）** | **14.3 s** |
+| vivo USB 常亮（本轮） | 13.5 s |
+
+**同一个 QEMU、同一个镜像：14 秒 vs 永远到不了。** 之前所有"慢"的读数都是这个差。
+
+**2. P0-a 在两条独立线上都不触发**
+
+- PDYT20（mt6853/A12，root，内核锁）：q-p0a 14.3s / b-old 14.6s
+- vivo（mt6833/A11，无 root，常亮）：q-p0a 13.5s / b-old 13.5s
+
+**两个不同 SoC、两个不同 Android 版本、两种不同的防 suspend 手段，
+`q-p0a` 与 `b-old` 的行为都没有可分辨的差异。**
+
+所以 13.28 的 epoch 修复：
+- **逻辑正确**（复用槽位的代际混叠是客观路径）
+- **但在当前场景下不是可观测的故障**
+
+我不宣布"P0-a 已修"。要验证它需要能稳定让 QEMU 换掉 host 映射的场景。
+
+**3. CNTFRQ 在两台设备上都是 13 MHz（13.32 已记录）**
+
+vivo `MT6833V/ZA` 与 OPPO `mt6853` 都报 `13000000`，且实测速率 1:1 吻合
+（ratio=1.0000）。**用户担心的 19.2 MHz 差异没有在这两台出现。**
+但 `to24_mult` 里硬编码 `13e6` 仍是隐患 —— 换成 19.2 MHz 设备会差 1.475 倍。
+
+#### 五、跨设备对比的工具（已固化）
+
+| 脚本 | 用途 | 备注 |
+|---|---|---|
+| `work/probe/cntfrq/` | 读 `CNTFRQ_EL0` + 实测速率 | 静态链接，adb push 即可 |
+| `/data/local/tmp/vboot.sh` | vivo：到 Shell 的墙钟时间，n 轮 | 用 `/proc/uptime`（adb shell 无 python3） |
+| `~/h/pboot.sh` | PDYT20：同上 | 用 `python3`（Termux 读不了 `/proc/uptime`） |
+| `/data/local/tmp/vdisk.sh` | vivo：带盘到 Linux 各阶段 | 测 kernel@ / userspace@ |
+
+**这两个平台的计时手段必须不同**：vivo 的 adb shell 没有 python3
+（`/proc/uptime` 可读），PDYT20 的 Termux 反过来（`/proc/uptime`
+`Permission denied`，python3 可用）。写工具时要按平台选。
