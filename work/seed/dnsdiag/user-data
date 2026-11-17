@@ -1,0 +1,238 @@
+#cloud-config
+# DNS 三层诊断 v2：一次 boot，四个阶段内的对照全做完。
+#
+#   phase=pre    guest 原始状态（拿到什么 nameserver 就打什么）
+#   phase=post   把 link DNS 换成 223.5.5.5 再打一遍 —— A/B 只差这一个变量，同一个 boot
+#
+# 每个 phase 里对同一个 nameserver 做三种打点：
+#   kind=udp    未 connect 的 sendto   —— 应用最常见的写法；ICMP 错误对它是不可见的
+#   kind=udpc   connect 过的 UDP       —— ICMP 错误会以 errno 形式浮出来
+#   kind=tcp53  TCP 连 53              —— 验 STATES.md 里“TCP refused 属正常”那条
+# 两个 kind 的差值就是「静默丢弃」与「明确拒绝」的分界。
+#
+# 外加 kind=ctrl：直连 223.5.5.5。没有它，"无应答"无法区分「那个代理坏了」和「UDP 整体不通」。
+datasource_list: [NoCloud, None]
+
+write_files:
+  # python 单独一个文件，不塞进 shell 的 heredoc：
+  # YAML 块标量的缩进会被剥到列 0，heredoc 里的 python 首行随即 IndentationError；
+  # 而 dash 的 `<<-` 只吃制表符、不吃空格 —— 这条路在这里走不通。
+  - path: /usr/local/bin/dnsq
+    permissions: '0644'
+    content: |
+      import socket, struct, sys, errno
+      def qname(n):
+          b = b""
+          for p in n.split("."):
+              if p:
+                  b += bytes([len(p)]) + p.encode()
+          return b + b"\x00"
+      def pkt(name):
+          return struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + qname(name) + struct.pack(">HH", 1, 1)
+      def classify(d):
+          rcode = d[3] & 0x0F
+          an = struct.unpack(">H", d[6:8])[0]
+          if rcode == 0 and an > 0:
+              return "answer:an=%d" % an
+          return "rcode=%d:an=%d" % (rcode, an)
+      def ename(e):
+          n = errno.errorcode.get(getattr(e, "errno", None) or 0)
+          return n or type(e).__name__
+      def udp(server, name, connected):
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(6)
+          try:
+              if connected:
+                  s.connect((server, 53))
+                  s.send(pkt(name))
+              else:
+                  s.sendto(pkt(name), (server, 53))
+              return classify(s.recv(2048))
+          except socket.timeout:
+              return "timeout"
+          except OSError as e:
+              return "err:" + ename(e)
+          finally:
+              s.close()
+      def tcp(server, name, port=53):
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s.settimeout(6)
+          try:
+              s.connect((server, port))
+          except socket.timeout:
+              s.close(); return "timeout"
+          except OSError as e:
+              s.close()
+              # 用三态词汇表里已有的词：refused 就是 refused，别造一个 err:ECONNREFUSED
+              # 跟 STATES.md 对不上号。
+              return "refused" if getattr(e, "errno", None) == errno.ECONNREFUSED else "err:" + ename(e)
+          if port != 53:
+              s.close(); return "connected"
+          # 连上了：DNS over TCP 是 2 字节长度前缀。看它回不回、回什么，
+          # 别用"连上就算 ok"糊过去 —— 那只说明端口开着，不说明它是 DNS。
+          try:
+              b = pkt(name)
+              s.send(struct.pack(">H", len(b)) + b)
+              h = s.recv(2)
+              if len(h) < 2:
+                  return "connected:closed"
+              n = struct.unpack(">H", h)[0]
+              d = b""
+              while len(d) < n:
+                  c = s.recv(n - len(d))
+                  if not c:
+                      break
+                  d += c
+              return "ok:" + classify(d) if len(d) >= 12 else "connected:short"
+          except socket.timeout:
+              return "connected:no-reply"
+          except OSError as e:
+              return "connected:" + ename(e)
+          finally:
+              s.close()
+      def udperr(server, name):
+          # udp 与 udpc 都看不到"内核收到了 ICMP 但没告诉应用"这种情况。
+          # IP_RECVERR + MSG_ERRQUEUE 才是问内核"你到底收没收到 ICMP"的正规问法。
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(6)
+          try:
+              s.setsockopt(socket.SOL_IP, 11, 1)  # IP_RECVERR
+          except OSError as e:
+              s.close(); return "no-recoverr:" + ename(e)
+          try:
+              s.connect((server, 53))
+              s.send(pkt(name))
+              try:
+                  s.recv(2048)
+                  return "answered"
+              except socket.timeout:
+                  pass
+              except OSError as e:
+                  return "recv:" + ename(e)
+              s.setblocking(False)
+              try:
+                  s.recvmsg(512, 0, 0x2000)  # MSG_ERRQUEUE
+              except BlockingIOError:
+                  return "none"          # 内核侧也没收到 ICMP：真空洞
+              except OSError as e:
+                  return "errqueue:" + ename(e)
+              return "errqueue:unknown"
+          finally:
+              s.close()
+      mode, server, name = sys.argv[1], sys.argv[2], sys.argv[3]
+      if mode == "udp":
+          print(udp(server, name, False))
+      elif mode == "udpc":
+          print(udp(server, name, True))
+      elif mode == "udperr":
+          print(udperr(server, name))
+      elif mode == "tcp80":
+          print(tcp(server, name, 80))
+      elif mode == "tcp":
+          print(tcp(server, name, 53))
+      else:
+          print("bad-mode")
+
+  - path: /usr/local/bin/dnsdiag
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # dnsdiag —— 把「DNS 坏了」拆成能落到具体层的几句。
+      # 不用 dig/nslookup：镜像里没有。裸 UDP/TCP 打点走 /usr/local/bin/dnsq。
+      C=/dev/console
+      say() { echo "$@" >> $C; }
+      DNSQ=/usr/local/bin/dnsq
+      NAME=mirrors.tuna.tsinghua.edu.cn
+
+      PHASE=pre
+      if [ "${1:-}" = "--fix" ]; then
+          PHASE=post
+          # 换 link DNS。这是**绕行**：让 guest 的查询目标不再是 slirp 的虚拟 DNS
+          # （10.0.2.3），从而走普通 UDP NAT，不经过 libslirp 的 DNS 翻译。
+          # 它绕开的是坏掉的那一跳，不是修好它 —— 修法另算。
+          IF=$(ip -4 route 2>/dev/null | awk '/^default/{print $5; exit}')
+          if command -v resolvectl >/dev/null 2>&1 && [ -n "$IF" ]; then
+              resolvectl dns "$IF" 223.5.5.5 >>$C 2>&1
+              resolvectl flush-caches >>$C 2>&1
+              sleep 2
+          fi
+      fi
+
+      say "DNSDIAG-$PHASE-BEGIN uptime=$(cut -d' ' -f1 /proc/uptime) if=${IF:-n/a}"
+      PY=$(command -v python3 2>/dev/null)
+      say "DNSDIAG-$PHASE-PYTHON ${PY:-MISSING}"
+
+      # ---- 层 0：路由 ----
+      say "DNSDIAG-$PHASE-ROUTE $(ip -4 route 2>/dev/null | tr '\n' '|')"
+
+      # ---- 层 1：下发 ----
+      NS_CONF=$(awk '/^nameserver/{print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
+      NS_CONF=${NS_CONF% }
+      say "DNSDIAG-$PHASE-CONF ns=[$NS_CONF] file=$(readlink -f /etc/resolv.conf 2>/dev/null)"
+      if command -v resolvectl >/dev/null 2>&1; then
+          say "DNSDIAG-$PHASE-RESOLVECTL $(resolvectl dns 2>/dev/null | tr '\n' '|')"
+          say "DNSDIAG-$PHASE-RESOLVED-ACTIVE $(systemctl is-active systemd-resolved 2>&1)"
+      else
+          say "DNSDIAG-$PHASE-RESOLVECTL <resolvectl 不存在>"
+          say "DNSDIAG-$PHASE-RESOLVED-ACTIVE <n/a>"
+      fi
+      case " $NS_CONF " in
+        *" 127.0.0.53 "*) say "DNSDIAG-$PHASE-STUB yes" ;;
+        *)                say "DNSDIAG-$PHASE-STUB no" ;;
+      esac
+      say "DNSDIAG-$PHASE-NSSWITCH $(grep '^hosts' /etc/nsswitch.conf 2>/dev/null)"
+
+      # ---- 层 2：转发 ----
+      q() { [ -z "$PY" ] && { echo "no-python"; return; }; $PY $DNSQ "$1" "$2" "$NAME" 2>&1; }
+
+      R_U=skip; R_C=skip; R_T=skip; R_E=skip
+      for ip in $NS_CONF; do
+          R_U=$(q udp    "$ip"); say "DNSDIAG-$PHASE-PROBE kind=udp    server=$ip result=$R_U"
+          R_C=$(q udpc   "$ip"); say "DNSDIAG-$PHASE-PROBE kind=udpc   server=$ip result=$R_C"
+          R_E=$(q udperr "$ip"); say "DNSDIAG-$PHASE-PROBE kind=udperr server=$ip result=$R_E"
+          R_T=$(q tcp    "$ip"); say "DNSDIAG-$PHASE-PROBE kind=tcp53  server=$ip result=$R_T"
+      done
+      [ -z "$NS_CONF" ] && say "DNSDIAG-$PHASE-PROBE kind=udp server=- result=no-nameserver"
+
+      # 同地址非 53 端口：分辨"这个虚拟地址整体不可达"与"只有 53 端口被拦"。
+      # sotranslate_out4 的条件是 `so_fport == 53 && get_dns_addr() >= 0`，
+      # 那个 && 短路意味着**非 53 端口同样翻译失败** —— 预测 tcp80 也是 err。
+      R_80=$(q tcp80 10.0.2.3); say "DNSDIAG-$PHASE-PROBE kind=tcp80  server=10.0.2.3 result=$R_80"
+
+      # 对照：直连公网 DNS，不走 guest 的 nameserver 配置。
+      CTRL=$(q udp 223.5.5.5)
+      say "DNSDIAG-$PHASE-PROBE kind=ctrl  server=223.5.5.5 result=$CTRL"
+
+      # ---- 层 3：中间层 ----
+      if [ -n "$PY" ]; then
+          say "DNSDIAG-$PHASE-GETADDRINFO $($PY -c 'import socket
+      try: print("ok:" + socket.gethostbyname("mirrors.tuna.tsinghua.edu.cn"))
+      except Exception as e: print("fail:" + type(e).__name__)' 2>&1 | tr '\n' ' ')"
+      else
+          say "DNSDIAG-$PHASE-GETADDRINFO no-python"
+      fi
+
+      # ---- 判定 ----
+      # 静默丢弃 与 明确拒绝 是两种机制，分开写，否则"timeout"会把它们盖成一个。
+      case "$R_U" in
+        answer:*)  V="转发通：nameserver 有应答" ;;
+        timeout)
+          case "$R_E" in
+            none)       V="静默黑洞：errqueue 也是空的 —— 内核连 ICMP 都没收到，包被无声丢弃" ;;
+            errqueue:*) V="ICMP 到了内核（errqueue=$R_E），只是普通 recv 看不见 —— 不是静默丢弃" ;;
+            *)          V="UDP 无应答；errqueue=$R_E（未分类）" ;;
+          esac ;;
+        *)         V="未分类 udp=$R_U" ;;
+      esac
+      case "$CTRL" in
+        answer:*) : ;;
+        *)        V="$V / 对照也失败（ctrl=$CTRL）→ 先怀疑 UDP53 整体不通，别怪 nameserver" ;;
+      esac
+      say "DNSDIAG-$PHASE-VERDICT $V"
+
+      say "DNSDIAG-$PHASE-END"
+      sync
+
+runcmd:
+  - [ /usr/local/bin/dnsdiag ]
+  - [ /usr/local/bin/dnsdiag, --fix ]

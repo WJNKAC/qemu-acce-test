@@ -6209,7 +6209,7 @@ C6 是本项目第一例"定级来源为 AI 幻觉"的案例。记录它本身�
 
 ```
 NETPROBE-TCP-GW22  state=refused    ← 网络通，网关没开 22
-NETPROBE-TCP-DNS53 state=refused    ← 10.0.2.3:53 不收 TCP（只做 UDP DNS）
+NETPROBE-TCP-DNS53 state=err:OSError ← 真读数是 ENETUNREACH，见 13.54（本行曾误写为 refused）
 NETPROBE-CURL      code=200         ← 完整路径通（经 slirp 到 host loopback）
 ```
 
@@ -6289,7 +6289,7 @@ dsusp_ms=0  verdict=VALID
 | 端口 | 谁在听 | `refused` 的含义 |
 |---|---|---|
 | `10.0.2.2:22` | slirp 网关（故意不监听） | **正常** —— 网关可达且无 SSH |
-| `10.0.2.3:53` TCP | slirp 内建 DNS（只做 UDP） | **正常** —— 主机可达，不收 TCP |
+| `10.0.2.3:53` TCP | **没有谁在听**（`get_dns_addr()` 恒失败） | **不正常** —— 实测 `ENETUNREACH`，见 13.54；曾误记为 "refused=正常" |
 | `10.0.2.2:10080` | host 侧 `nc -l` | **host 监听没起** → host 侧问题，不是网络问题 |
 
 第三条尤其要标出来：10080 的 `refused` **不反映 guest↔slirp 数据面**，
@@ -7243,3 +7243,222 @@ $ ./tcpprobe 127.0.0.1 10080 2      # 无监听
 | 变量未定义 | ✅ 工具化（`varlint.py`），34 脚本全过 |
 | 宿主侧可达性探测 | ✅ 工具化（`tcpprobe.c`） |
 
+
+## 13.54 slirp 的 DNS 不是"转发坏了"，是那个虚拟地址整个不可路由
+
+13.53 结在"DNS 故障已缩到 slirp 特有，但下发 vs 转发未分"。这一节把它拆到了底，
+顺带抓到一条**从来没测过就被写进文档、还进了判读表**的结论。
+
+### 一、做法：一次 boot，两个 phase，五路打点
+
+一台机器一次启动就能做 A/B，比跑两次 boot 强 —— 前后两个 phase 共享同一次
+DHCP、同一个 systemd-resolved 状态、同一份内核，唯一变量是 DNS 指向：
+
+```yaml
+runcmd:
+  - [ /usr/local/bin/dnsdiag ]              # phase=pre   裸状态
+  - [ /usr/local/bin/dnsdiag, --fix ]       # phase=post  换 link DNS 后重测
+```
+
+`--fix` 只做一件事：`resolvectl dns <if> 223.5.5.5` + `flush-caches`。
+
+每个 phase 对同一个 nameserver 打五路：
+
+| kind | 怎么打 | 它能回答什么 |
+|---|---|---|
+| `udp` | 未 connect 的 `sendto` | 应用最常见的写法看到什么 |
+| `udpc` | `connect()` 过的 UDP | ICMP 错误会不会浮出来 |
+| `udperr` | `connect()` + `IP_RECVERR` + `MSG_ERRQUEUE` | **内核到底收没收到 ICMP** |
+| `tcp53` | TCP 连 53 端口 | 与 UDP 的差异 |
+| `tcp80` | TCP 连**同地址的 80 端口** | 「地址不可达」还是「只有 53 被拦」 |
+| `ctrl` | 直连 `223.5.5.5` | 对照组：UDP53 整体通不通 |
+
+`udperr` 这一路是必须的。前两路都只能说"应用没拿到"，而"应用没拿到"有两种：
+包被丢了，和包被回了但应用看不见。**这两种的修法完全不同，不能靠猜。**
+
+### 二、读数（slirp3，vivo V2156FA，q-p0a8，smp2）
+
+```
+--- phase=pre  （裸状态）---
+DNSDIAG-pre-CONF ns=[10.0.2.3]
+DNSDIAG-pre-RESOLVECTL Global:|Link 2 (enp0s1): 10.0.2.3|
+DNSDIAG-pre-STUB no
+DNSDIAG-pre-PROBE kind=udp    server=10.0.2.3 result=timeout
+DNSDIAG-pre-PROBE kind=udpc   server=10.0.2.3 result=timeout
+DNSDIAG-pre-PROBE kind=udperr server=10.0.2.3 result=recv:ENETUNREACH
+DNSDIAG-pre-PROBE kind=tcp53  server=10.0.2.3 result=err:ENETUNREACH
+DNSDIAG-pre-PROBE kind=tcp80  server=10.0.2.3 result=err:ENETUNREACH
+DNSDIAG-pre-PROBE kind=ctrl   server=223.5.5.5 result=answer:an=2
+DNSDIAG-pre-GETADDRINFO fail:gaierror
+
+--- phase=post  （只改了一件事：link DNS -> 223.5.5.5）---
+DNSDIAG-post-CONF ns=[223.5.5.5]
+DNSDIAG-post-PROBE kind=udp    server=223.5.5.5 result=answer:an=2
+DNSDIAG-post-PROBE kind=udpc   server=223.5.5.5 result=answer:an=2
+DNSDIAG-post-PROBE kind=udperr server=223.5.5.5 result=answered
+DNSDIAG-post-PROBE kind=tcp53  server=223.5.5.5 result=ok:answer:an=2
+DNSDIAG-post-GETADDRINFO ok:101.6.15.130
+```
+
+三句话读完：
+
+1. **不是 guest 配错**：同一个 guest、同一次 boot，改成 223.5.5.5 立刻就通了。
+2. **不是 UDP53 整体不通**：`ctrl` 打 223.5.5.5 一次就拿到 `answer:an=2`。
+3. **是 `10.0.2.3` 这一个地址整个不可达**：`tcp80`（同地址、非 53 端口）
+   同样是 `ENETUNREACH`。**如果只是"DNS 只做 UDP 不收 TCP"，80 端口不该也是这个错。**
+
+### 三、根因：五步源码链
+
+`10.0.2.3` 不是宿主机上的一台 DNS，是 libslirp 的**虚拟 DNS 地址**。
+凡是打到这个地址的包，都要先做一次地址翻译：
+
+```c
+/* socket.c:954 */
+static bool sotranslate_out4(Slirp *s, struct socket *so, struct sockaddr_in *sin)
+{
+    if (!s->disable_dns && so->so_faddr.s_addr == s->vnameserver_addr.s_addr) {
+        return so->so_fport == htons(53) && get_dns_addr(&sin->sin_addr) >= 0;
+    }
+    ...
+```
+
+第 2 步：`get_dns_addr()` 的上游来源只有一个 —— 宿主机的 `/etc/resolv.conf`：
+
+```c
+/* slirp.c:366 */
+#define RESOLV_CONF_PATH "/etc/resolv.conf"
+/* slirp.c:446 */
+    f = fopen(RESOLV_CONF_PATH, "r");
+    if (!f)
+        return -1;
+```
+
+第 3 步：**Android 上没有这个文件。** 实测：
+
+```
+$ ls -ld /etc
+lrw-r--r-- 1 root root 11 2009-01-01 08:00 /etc -> /system/etc
+$ ls /etc/resolv.conf /system/etc/resolv.conf /vendor/etc/resolv.conf
+ls: /etc/resolv.conf: No such file or directory
+ls: /system/etc/resolv.conf: No such file or directory
+ls: /vendor/etc/resolv.conf: No such file or directory
+```
+
+第 4 步：`get_dns_addr()` 返回 -1 → `sotranslate_out4()` 返回 `false` →
+`sotranslate_out()` 落进 `errno = EPERM; return -1;`（`socket.c:1013`）。
+
+第 5 步：两条出口各自把这个失败翻译成不同现象：
+
+| 出口 | 代码 | guest 看到 |
+|---|---|---|
+| TCP | `tcp_fconnect()` 失败（`tcp_subr.c:433`）→ `tcp_input.c:646` 判 errno ≠ ECONNREFUSED → `icmp_send_error(..., ICMP_UNREACH_NET, ...)` | **`ENETUNREACH`**（连接被明确拒绝） |
+| UDP | `sosendto()` 失败（`udp.c:228`）→ 同一个 `icmp_send_error` | 普通 `recv` **`timeout`**，只有开了 `IP_RECVERR` 才看得见 `ENETUNREACH` |
+
+**这就是为什么同一时刻 UDP 是 timeout、TCP 是 ENETUNREACH。**
+不是两种故障，是同一个 `EPERM` 的两张脸。而 `timeout` 恰好是三态表里
+"唯一可疑信号" —— 于是这个**确定性的、每次都发生**的故障，一路被读成了
+"网络不通/说不清"。
+
+### 四、决定性证据：反事实实验
+
+上面全是"读代码 + 观测吻合"。要把它变成因果，得改一个变量看它是否按预测变。
+
+**实验：`-netdev user,id=n0,dns=223.5.5.5`**（把虚拟 DNS 地址本身改成 223.5.5.5）
+
+预测（来自 `sotranslate_out4` 的第一个 `if`）：**任何**发往 223.5.5.5 的包
+都会进入"虚拟 DNS"分支，然后因为 `get_dns_addr()` 仍然是 -1 而 EPERM。
+
+```
+DNSDIAG-pre-ROUTE ... 223.5.5.5 via 10.0.2.2 dev enp0s1 proto dhcp ...
+DNSDIAG-pre-CONF ns=[223.5.5.5]
+DNSDIAG-pre-PROBE kind=udp    server=223.5.5.5 result=timeout
+DNSDIAG-pre-PROBE kind=udperr server=223.5.5.5 result=recv:ENETUNREACH
+DNSDIAG-pre-PROBE kind=tcp53  server=223.5.5.5 result=err:ENETUNREACH
+DNSDIAG-pre-PROBE kind=tcp80  server=10.0.2.3 result=err:EHOSTUNREACH   ← 变了
+DNSDIAG-pre-PROBE kind=ctrl   server=223.5.5.5 result=timeout           ← 从 answer 掉成 timeout
+```
+
+两处变化都在预测的方向上：
+
+- `ctrl`（223.5.5.5）从 `answer:an=2` 掉成 `timeout` —— 因为 223.5.5.5 现在
+  **是**虚拟 DNS 地址了，被同一个分支拦住。**这证明拦截的是地址，不是端口。**
+- `tcp80`（10.0.2.3）从 `ENETUNREACH` 变成 `EHOSTUNREACH` —— 10.0.2.3 不再是
+  虚拟 DNS 后，这个包会真的被送到宿主机网络，宿主机上没有 10.0.2.3，于是
+  `EHOSTUNREACH`。**同一个探测点，换个 config 就换了个错误码，只有"翻译失败"
+  这一层解释得通。**
+
+**结论：`-netdev user,dns=X` 不是修法，是毒药。** 它把 X 变成不可达地址，
+（在 Android 上）连 X 的 80/443 一起打死。
+
+### 五、★ 顺手抓到一条从未实测过的结论（第七关·续，第二次）
+
+`STATES.md` 第二节有一行，一直当规则用：
+
+> `10.0.2.3:53` (TCP) ｜ slirp 内建 DNS（**只做 UDP**）｜ DNS 主机可达，但不收 TCP → **正常**
+
+`QEMU-BACKEND.md` 6212 行还配了一段"实测输出"：
+
+```
+NETPROBE-TCP-DNS53 state=refused    ← 10.0.2.3:53 不收 TCP（只做 UDP DNS）
+```
+
+**这个 `refused` 从来没出现过。** 把 `work/probe/runs/` 下全部日志的
+`TCP-DNS53` 行统计一遍：
+
+| 后端 | 读数 | 次数 |
+|---|---|---|
+| slirp | `err:OSError` | **36** |
+| slirp | `ok` | 1（st-s20 round 9，见下） |
+| passt | `ok` | 35 |
+
+`err:OSError` 正是 `ENETUNREACH` 在 `tcp_state()` 里的落点（第 81 行 `except Exception`）。
+**读数一直是对的，是文档把它写成了 `refused`，然后这条写错的读数又反过来
+立了一条判读规则。**
+
+三重错，每一重都独立：
+
+1. 探针读数正确（`err:OSError`）。
+2. 汇总没把它归进任何一栏 —— st-e 的汇总写着 `探针异常: 0`，而那一轮 serial
+   里有 3 条 `err:OSError`。原因就是 13.53 记过的那个空仪器：
+   当时 `PERR` 数的是 `PROBE-ERR`，而探针从来只打 `err:<Type>`。
+   **计数器数不到它，等于没有它。**
+3. 文档写了个从未出现的 `refused`，并据此推出"TCP 不收、UDP 收"这个
+   *看起来非常合理* 的机制解释。
+
+第 3 重最危险：它合理到了没人会去查。**"合理"不是证据。**
+
+那条 `ok`（st-s20 round 9，18 次里唯一一次）目前**解释不了**。按上面的链条，
+它要求那一瞬间 `get_dns_addr()` 成功过一次 —— 而宿主没有 `/etc/resolv.conf`，
+这条路本该恒失败。记在这里，不当成"偶发抖动"糊过去。
+
+### 六、修法：一条已验、一条是坑、一条要重编
+
+| 方案 | 状态 | 说明 |
+|---|---|---|
+| guest 侧把 nameserver 指到真实 DNS | ✅ **已验**（phase=post 全绿） | `resolvectl dns <if> 223.5.5.5`；绕开被拦的虚拟地址，走普通 UDP NAT |
+| `-netdev user,dns=X` | ❌ **是坑** | 见第四节，把 X 整个变成不可达 |
+| 让 libslirp 有 `/etc/resolv.conf` 之外的来源 | ⏳ 需重编 | 见下 |
+
+第三条是根治。成本要先说清：`subprojects/slirp` 是**独立 git 仓库**
+（`subprojects/slirp.wrap` 指向 libslirp.git，qemu 主仓不跟踪它），
+所以它不能进 `patches/0001-henge-port.patch`，要再加一个补丁目标，
+`apply.sh` 得扩成多目标。改动本身约 20 行（`get_dns_addr_resolv_conf()`
+在 `fopen` 失败时回落到一个环境变量），真正花时间的是补丁机制 + 增量重编
++ 110 MB 重推。**估 45–60 分钟**，不含验证。
+
+而第一条已经把"装包类验证"解锁了 —— 13.9 记的"需要一条 seed 里
+`systemctl disable --now systemd-resolved` 的绕法"，现在有了更准的一条：
+**不用 disable resolved，只要把 link DNS 换掉**。
+
+### 七、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| DNS 故障分层 | ✅ 下发正常 / 转发 **在地址翻译层就断了** / resolver 层无辜 |
+| 根因 | ✅ Android 无 `/etc/resolv.conf` → `get_dns_addr()` 恒 -1 → 虚拟 DNS 地址 EPERM |
+| 因果强度 | ✅ 反事实实验两处变化均符合预测（`dns=` 把 ctrl 打死、tcp80 换错误码） |
+| "TCP 不收 / UDP 收" | ❌ **从未实测过**，是文档编的；真实读数是 `ENETUNREACH` |
+| 汇总计数器 | ❌ `err:OSError` 没被任何一栏统计（`探针异常: 0` 而实际 3 条） |
+| 唯一一次 `ok` | ⚠ 未解释，已记录 |
+| 绕法 | ✅ 已验（一次 boot 内 A/B） |
+| 根治 | ⏳ 待做，估 45–60 分钟 |

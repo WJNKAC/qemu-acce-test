@@ -30,10 +30,12 @@
 | 端口 | 谁在听 | `refused` 的含义 |
 |---|---|---|
 | `10.0.2.2:22` | slirp 网关（**故意不监听**） | 网关可达，且没有 SSH 服务 → **正常**，这是"通"的阳性证据 |
-| `10.0.2.3:53` (TCP) | slirp 内建 DNS（**只做 UDP**） | DNS 主机可达，但不收 TCP → **正常** |
+| `10.0.2.3:53` (TCP) | **没有谁在听**（`get_dns_addr()` 恒失败） | **从来不是 `refused`** —— 实测是 `err:ENETUNREACH`（13.54）。本行曾写作"DNS 主机可达，但不收 TCP → 正常"，**该结论从未被实测支持**，已作废 |
 | `10.0.2.2:10080` | host 侧 `nc -l` 监听 | `refused` = **监听者不在** → 是 host 侧的问题，不是网络问题 |
 
 **规则：读到 `refused` 时必须看端口，再决定算"通"还是算"host 侧未就绪"。**
+**补充（13.54）：虚拟 DNS 地址 `10.0.2.3` 的任何端口都不可达**，
+且是 `get_dns_addr()` 取不到上游导致的 `EPERM` —— 不要把它读成"端口语义"。
 
 `10080` 的 `refused` 尤其要小心 —— 它不反映 guest↔slirp 数据面，
 只反映"我那个 nc 监听没起来"。判读时单独标注，不并入网络健康度。
@@ -67,6 +69,8 @@
 |---|---|
 | 13.45 | 首版二态判据把 `refused` 当失败，与同时的 `curl 200` 矛盾 → 改三态 |
 | 13.45 回溯 | grep 全部脚本：只有 `seedtest.sh` 做 TCP 探测，无其他脚本把 `Connection refused` 记作失败 → **历史读数未被污染** |
+| **13.54** | **`10.0.2.3:53` 那行"refused = 正常"从未被任何实测支持**。全部日志里 36 次是 `err:OSError`（= `ENETUNREACH`），0 次 `refused`。该结论作废，根因见 `QEMU-BACKEND.md` 13.54 |
+| **13.54** | UDP 判读不再套用 TCP 三态，改为独立五态（第七节）；`timeout` 降级为"证据最弱的一档" |
 
 ## 六、第七关补充：内部结论也要查
 
@@ -85,3 +89,42 @@
 
 **硬验证**：`grep -n "engine/" accel/henge/meson.build`
 → 只有 `engine/core`、`engine/host`、`engine/compat`，**没有 `engine/devices`**。
+
+## 七、UDP 不算三态，它算五态（13.54 补）
+
+上面那张表是 **TCP 专用**的。UDP 没有握手、没有 RST，`refused` 这个词在 UDP 上
+根本不存在。硬把 TCP 的词汇套上去，会得到一批"看起来对、其实没有信息"的读数。
+
+| 读数 | 怎么来的 | 判读 |
+|---|---|---|
+| `answer:an=N` | 收到应答且 N>0 | **通** |
+| `rcode=K:an=0` | 收到应答但 rcode≠0 | **通**，是上游拒绝解析（NXDOMAIN 等），不是网络问题 |
+| `timeout` | 应用侧 `recv()` 超时 | **证据最弱的一档**，见下 |
+| `err:<ERRNO>` | `connect()` 过的 socket 拿到 errno | 包被处理了，且结果明确 |
+| `answered` | `IP_RECVERR` 路径拿到应答 | 通 |
+
+**关键：UDP 的 `timeout` 不等于 TCP 的 `timeout`。**
+
+TCP 的 `timeout` 说明"没收到任何回应"——SYN 发出去了，没有 SYN-ACK 也没有 RST，
+这在本机链路层是可信的。
+
+UDP 的 `timeout` 只说明**应用没拿到东西**，它至少对应两种截然不同的世界：
+
+1. 包真的被丢了（网络不通 / 对端不存在）
+2. 包被回了 ICMP，但内核没把它交给这个 socket
+
+第 2 种在实测中真的发生过：同一个 `10.0.2.3:53`，普通 `recv()` 是 `timeout`，
+而加了 `IP_RECVERR` 就能直接拿到 `ENETUNREACH`（13.54）。
+**如果只看 `timeout`，这个"确定发生的故障"会被读成"说不清"。**
+
+**规则：凡是 UDP 探针报 `timeout`，先问一句"内核收没收到 ICMP"。**
+问法是 `setsockopt(SOL_IP, IP_RECVERR, 1)` + `connect()` + `recvmsg(MSG_ERRQUEUE)`。
+拿不到任何东西，才是真空洞。
+
+### 常见误判
+
+| 反例 | 为什么错 |
+|---|---|
+| 用 `refused` 描述 UDP | UDP 没有 RST，这个词在 UDP 上没有意义 |
+| 把 UDP `timeout` 直接记成"网络不通" | 可能只是 ICMP 没交给应用 |
+| 用 TCP 连 53 端口来"验 DNS 通不通" | DNS 主用 UDP；TCP 那一路失败说明的是别的事（13.54：说明地址翻译就失败了） |
