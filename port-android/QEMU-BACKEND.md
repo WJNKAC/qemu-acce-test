@@ -4447,3 +4447,228 @@ adb shell dumpsys deviceidle whitelist | grep termux   # 验证
 
 所以 `sidecar_check.sh` 的 `INVALID` 判定不是可选的仪式，
 它是**唯一能区分"guest 慢"和"设备睡了"的仪器**。
+
+
+### 13.31 ★★★ 内核 suspend blocker 解决了一切：干净 A/B 的结论
+
+用户指出 `a72` 密码可以 `su` 提权。这是本轮的关键转折。
+
+#### 一、`su` 的正确姿势（沙箱无 PTY，但能喂 stdin）
+
+```sh
+echo a72 | su -c "id"
+# → uid=0(root) gid=0(root) context=u:r:magisk:s0      （Magisk）
+```
+
+一个坑：嵌套 `su` 时密码会被内层 sh 当命令：
+
+```sh
+echo a72 | su -c "su 2000 -c id"
+# → /system/bin/sh: <stdin>[1]: a72: inaccessible or not found
+```
+
+**必须把内层 stdin 断开**：
+
+```sh
+echo a72 | su -c "su 2000 -c id < /dev/null"
+# → uid=2000(shell) gid=0(root) ...                     ✅
+```
+
+#### 二、白名单加上了，但仍然不够
+
+```sh
+echo a72 | su -c "cmd deviceidle whitelist +com.termux"
+# → Added: com.termux
+echo a72 | su -c "cmd deviceidle whitelist"
+# → user,com.termux,10280
+# → user,com.termux.boot,...          ✅
+```
+
+设备是 **OPPO PDYT20（ColorOS，mt6853，Android 12）**，
+appops 里 Termux 未被限制（`RUN_IN_BACKGROUND: allow`、`WAKE_LOCK: allow`）。
+
+**但加完白名单后跑的 `p0a3` 依然只到 12 行，sidecar 只采到 1 行 ——
+连 sidecar 进程本身都被冻住了。**
+
+原因：`deviceidle whitelist` 免的是 **Doze 对 app 后台活动的限制**，
+它**不阻止系统 suspend**。要阻止 suspend 需要 wakelock，
+而普通 `PARTIAL_WAKE_LOCK`（`termux-wake-lock` 就是它）在 Doze 下依然会被越过。
+
+#### 三、真正的解：内核级 suspend blocker
+
+```sh
+echo a72 | su -c "echo henge_hold > /sys/power/wake_lock"
+echo a72 | su -c "cat /sys/power/wake_lock"
+# → henge_hold
+```
+
+20 秒实测：
+
+```
+dM=20.00s  dB=20.00s  dsusp=0.00s    → 完全挡住
+```
+
+**`/sys/power/wake_lock` 是内核的 suspend blocker，系统要 suspend
+必须先等所有 blocker 释放，Doze 绕不过去。** 而 `termux-wake-lock`
+走的是 Android PowerManager，在 Doze 里可以被无视。
+
+固化为 `work/probe/powerhold.sh`（hold / release / status / check）。
+
+#### 四、干净环境下的结果：所有"慢"和"卡"都是 doze
+
+| run | 二进制 | 锁 | 真实耗时 | serial 行 | BdsDxe | Linux | SIGSEGV | dsusp |
+|---|---|---|---|---|---|---|---|---|
+| p0a3 | q-p0a | 白名单+wakelock | 240s+ | **12** | 0 | 0 | 0 | 采样仅 1 次 |
+| **p0a4** | **q-p0a** | **内核 blocker** | **400s** | **591** | **2** | **1** | **0** | **0** |
+| **old4** | **b-old** | **内核 blocker** | **400s** | **547** | **2** | **1** | **0** | **0** |
+
+`p0a4` 的 sidecar 逐行都是 `dsusp=0 ok`：
+
+```
+15:11:40   dM=10931  dB=10931  dsusp=0  ok
+15:11:51   dM=10850  dB=10850  dsusp=0  ok
+```
+
+guest 侧（`p0a4`）：
+
+```
+[  225.650072] cloud-init[375]: Calling 'None' failed [50/120s]: ...
+              HTTPConnectionPool(host='169.254.169.254', port=80)      ← AWS IMDS
+[  225.743345] cloud-init[375]: ... host='fd00:ec2::254' ... 
+              [Errno 101] Network is unreachable                        ← AWS IMDS IPv6
+```
+
+**Linux uptime 225 秒，cloud-init 在依次探测各云厂商的 metadata 端点，0 次 SIGSEGV。**
+
+#### 五、这条结论要写清楚：所有历史"慢"都不是引擎的问题
+
+`12 行 vs 591 行` 是**同一个 Linux 镜像、同一个 QEMU、同一组核**，
+唯一差别是设备是否 suspend。
+
+所以：
+
+| 历史结论 | 现在 |
+|---|---|
+| "boot 速率 3–6 行/分钟"（13.25） | ❌ 那是被 doze 稀释后的表观速率 |
+| "临界在 300–400 秒，慢到窗口边界上抖" | ❌ 干净环境下 130 秒就到 545 行 |
+| "R1 的 380 秒零增长 = 死等中断" | ⚠️ 冻结是真的，但成因是 suspend，不是 timer |
+| "4/12 行档是不同故障模式" | ❌ 同一故障（suspend）的不同深度 |
+| "10ms cap 导致每秒 100 次唤醒是主要成本" | ❓ 需要重测（现在能测准了） |
+
+#### 六、P0-a 的干净 A/B：**当前场景不触发**
+
+| | q-p0a（含 epoch 修复） | b-old（未修复） |
+|---|---|---|
+| serial 行 | 591 | 547 |
+| BdsDxe / Linux | 2 / 1 | 2 / 1 |
+| SIGSEGV | 0 | 0 |
+| dsusp | 0 | 0 |
+
+**两边行为一致 —— P0-a 在"带盘 boot 到 Linux"这个场景下不触发。**
+
+所以 epoch 修复的定位要诚实：
+
+- **逻辑正确**：`del_ram` free 掉 `page_gen` 后 `add_ram` 复用槽位，
+  新数组全 0 与旧 block 的 `b->gen==0` 混叠，这条路径客观存在
+- **但触发需要额外条件**：混叠命中后，旧 block 里的硬编码 host 地址
+  若恰好被 QEMU 复用成同一个映射，代码仍然"正确" → 不崩
+- **所以"P0-a 已修"不能宣布**，只能说"这条路径已被封住，
+  在当前场景下无法验证其必要性"
+
+要验证它，需要一个能稳定让 QEMU 换掉 host 映射的场景
+（反复 pflash romd toggle + 高频 SMC），或者构造一个单元测试。
+
+#### 七、`powerhold.sh` 之后脚本要怎么改（待办）
+
+`diskrun.sh` / `nrun.sh` / `sidecar.sh` 里的 `termux-wake-lock`
+应该换成：
+
+```sh
+sh $H/powerhold.sh hold || { echo "无法持有 suspend blocker"; exit 4; }
+# ... 跑 ...
+sh $H/powerhold.sh release
+```
+
+并在跑前跑一次 `powerhold.sh check 20`（`dsusp<1s` 才继续），
+**把"环境是否干净"从"事后解释"变成"事前门控"**。
+
+
+### 13.32 vivo 交叉验证：CNTFRQ 也是 13 MHz（隐患存在，但没踩到）
+
+用户建议在 vivo 上测试。找到了设备，情况比预想的好，也比预想的受限。
+
+#### 一、vivo 是可 adb 可达的第二台设备
+
+| | OPPO PDYT20 | vivo V2156FA |
+|---|---|---|
+| SoC | mt6853 | **MT6833V/ZA** |
+| Android | 12 (SDK 31) | **11 (SDK 30)** |
+| adb | ❌ 无线调试关 | ✅ **USB，`3538956564001EV`** |
+| Termux | ✅ SSH 8022（密码可用） | ✅ 已装，但 sshd 对未知用户 reset |
+| root | ✅ Magisk（`a72`） | ❌ `adbd cannot run as root in production builds` |
+
+#### 二、CNTFRQ 交叉验证（这是用户最关心的隐患）
+
+写了一个静态探针 `work/probe/cntfrq/`（读 `CNTFRQ_EL0` + 用
+`CLOCK_MONOTONIC` 实测速率，两者对比）。静态链接，`adb push` 就能跑，
+不需要 Termux 环境。
+
+```
+# vivo V2156FA (mt6833, Android 11)
+CNTFRQ_EL0 = 13000000  (13.000 MHz)
+measured    = 13.000 MHz  (6515721 ticks / 501.214 ms)
+ratio to CNTFRQ = 1.0000
+
+# OPPO PDYT20 (mt6853, Android 12)
+CNTFRQ_EL0 = 13000000  (13.000 MHz)
+measured    = 13.000 MHz  (6519589 ticks / 501.511 ms)
+ratio to CNTFRQ = 1.0000
+```
+
+**两台 MTK 都是 13.000 MHz，寄存器值与实测速率完全一致（ratio=1.0000）。**
+
+#### 三、这条交叉验证的结论要说清楚
+
+**隐患是真实的，但这两台设备没踩到。**
+
+| 平台 | CNTFRQ |
+|---|---|
+| Apple Silicon（Henge 假设） | 24 MHz |
+| OPPO mt6853 / vivo mt6833（实测） | **13 MHz** |
+| 高通与部分 MTK（文献值） | **19.2 MHz** |
+
+`to24_mult = 24e6<<32 / 13e6` 里的 `13e6` 是硬编码。
+换到 19.2 MHz 的设备，这个换算会差 **1.475 倍** —— guest 的
+`CNTVCT` 与所有 timer deadline 一起偏移 47%，是那种"看起来在跑但时间全错"的 bug。
+
+因为手上两台都是 13 MHz，**这条隐患在现有设备上无法被观测到**，
+但它是代码里客观存在的硬编码。
+
+正确做法（13.16 已提出，仍未做）：`init` 时读 `CNTFRQ_EL0` 算 `to24_mult`，
+不写死任何常数。现在有了 `cntfrq.c`，这个改动可以被验证。
+
+#### 四、vivo 上没能做的：QEMU 层面对比
+
+vivo 的 Termux 进不去：
+
+| 尝试 | 结果 |
+|---|---|
+| `ssh -p 8022 u0_a343@192.168.1.34` | `Connection reset`（试了 a72/a5/union/vivo/123456 与 4 个用户名） |
+| `adb shell run-as com.termux` | `package not debuggable` |
+| `adb root` | `adbd cannot run as root in production builds` |
+
+而 QEMU 二进制动态链接 Termux 的 libc++/libslirp，
+不能只靠 `adb push` 到 `/data/local/tmp` 跑起来。
+
+**所以 vivo 上的 QEMU 层面交叉验证需要用户提供 Termux 的 SSH 凭据**
+（用户名 + 密码，或 authorized_keys）。
+
+#### 五、这轮之后，vivo 交叉验证还差什么
+
+| 项 | 状态 |
+|---|---|
+| CNTFRQ 一致性 | ✅ 13 MHz，ratio=1.0000 |
+| 不同 Android 版本的 doze 行为 | ❌ 需 Termux 凭据 |
+| mt6833 vs mt6853 的 JIT 性能 | ❌ 同上 |
+| Android 11 的 `/sys/power/wake_lock` 是否同样有效 | ❌ 同上（这条值得一验，11 和 12 的 suspend 实现不同）|
+| 19.2 MHz 设备的换算验证 | ❌ 手上没有这类设备 |

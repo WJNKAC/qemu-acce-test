@@ -12,12 +12,14 @@
 #   oneround.sh stat  <tag>                 打印该轮的行数/BdsDxe/耗时
 set -u
 
-# ---- 设备 suspend 会让 CLOCK_MONOTONIC 停走，guest 被一起冻住 ----
-# 实测：30 秒真实时间里 MONOTONIC 只走 0.98 秒（97% 在 suspend），
-# 结果是 guest 的 85 秒 timer deadline 要等约 2550 秒真实时间。
-# QEMU 的 get_clock() 用 CLOCK_MONOTONIC，所以设备一睡 guest 就停。
-# 每个跑实验的脚本都必须先拿 wakelock，否则测的是"设备睡了多久"。
-termux-wake-lock 2>/dev/null || true
+# ---- 时钟连续性：用内核 suspend blocker，不用 termux-wake-lock ----
+# 13.30 实测：termux-wake-lock 拿的是 Android PowerManager 层的
+# PARTIAL_WAKE_LOCK，Doze 会越过它 —— 10 秒采样间隔里设备睡了 141.9 秒，
+# 而 QEMU 的 get_clock() 就是 CLOCK_MONOTONIC，deviceidle 白名单也挡不住
+# 系统 suspend（它只免 app 的后台限制）。
+# /sys/power/wake_lock 是内核 blocker，Doze 绕不过：实测 dsusp=0.00s。
+sh ${H:-/data/data/com.termux/files/home/h}/powerhold.sh hold >/dev/null 2>&1 || \
+    echo "警告: 无法持有 suspend blocker，本轮数据可能被 doze 污染" >&2
 H=${H:-/data/data/com.termux/files/home/h}
 CMD=${1:?start|stop|stat}
 TAG=${2:?tag}
