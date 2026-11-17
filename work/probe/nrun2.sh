@@ -38,6 +38,11 @@ case "$MILE" in
     net)     MPAT='ci-info: | Device |' ;;
     # 不用 'systemd\[1\]' —— boot 过程中每个 unit 都打一行，里程碑判据
     # 就不唯一了（第一次试跑 round 1 就数到 4，等于没等）。
+    #
+    # multi-user.target 在这个镜像上出现得很晚：cloud-init 要走满
+    # 120 秒的 metadata 超时（169.254.169.254 在 slirp 下永远连不通）
+    # 才放行，实测 145 秒时还没到。所以用这个里程碑必须给 >=240s/轮，
+    # 否则每轮都 timeout —— 而 timeout 会被误读成"系统没起来"。
     systemd) MPAT='Reached target multi-user.target' ;;
     *) echo "bad milestone: $MILE (bds|linux|net|systemd)"; exit 2 ;;
 esac

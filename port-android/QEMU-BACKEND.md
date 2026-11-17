@@ -5774,3 +5774,184 @@ fi
 升级到"地址 + 路由 + 网关可达"（ci-info 的 Route IPv4 表已经在 serial 里，
 `0.0.0.0 → 10.0.2.2 via enp0s1 UG` 这一行同样是现成的）。
 
+
+---
+
+### 13.42 C6 的三个前置检查：原始 reproducer 不存在，"S3" 在这个平台上不成立
+
+13.41 结尾说"下一轮做 15–20 轮"。**先按住。** 查完三件事之后，
+那 25 分钟的效力不取决于轮数，取决于一个更前置的问题：**形态是什么**。
+
+#### 一、形态：原始记录不存在
+
+全项目搜索（`port-android/*.md` + `FINDINGS.md` + `MEASURE.md` + 四份
+`.workbuddy/memory/*.md` + 全部 git 历史）：
+
+| 搜什么 | 结果 |
+|---|---|
+| `重启 5 次` / `仅 1 次` / `只有 1 次` + 网络上下文 | **0 命中** |
+| `DHCP` 全部出现处 | 只有**单次 boot** 的成功记录 |
+| `S3` | **0 命中**（只在 13.41 我自己写的那段里出现过） |
+| git log 里 net/dhcp/reboot 提交 | 0 条 |
+
+网络相关的原始记录**只有一条**（`QEMU-BACKEND.md` 13.9，第 2036 行）：
+
+```
+DHCP:  enp0s1 = 10.0.2.15/24,  gateway 10.0.2.2,  DNS 10.0.2.3
+ping 网关: 2 packets transmitted, 2 received, 0% packet loss
+6 × curl (Packages.xz, 8,689,464 B each), 全程 http=200:
+  r1 5.09 MB/s  r2 8.51  r3 8.26  r4 0.58 ← 离群  r5 7.87  r6 4.88
+```
+
+**这是单次 boot 的一次成功，不是"重启 5 次"的任何一次。**
+"重启 5 次仅 1 次重新 DHCP"这个数字，在整个项目里第一次出现是
+**用户在排期表里给我的**，而它没有对应的原始日志、没有 run 目录、
+没有 commit。
+
+**结论：C6 没有原始 reproducer。** 这与 P0-a 的处境**完全同构**——
+P0-a 的定级依据最后被查实是误挂的 linmap crash（13.35），
+C6 的定级依据现在也找不到出处。
+
+#### 二、"S3" 这个词在这个平台上不成立
+
+更要紧的是术语本身。`S3` 是 **x86 ACPI** 的 suspend-to-RAM 状态。
+查当前构建：
+
+```
+$ grep -rn "acpi_pm1_cnt\|pm1a_evt\|S3" hw/arm/virt-acpi-build.c
+(空)
+```
+
+**aarch64 的 `virt` 机器没有 ACPI S3。** ARM 的省电是 PSCI 的
+`CPU_SUSPEND` / `SYSTEM_SUSPEND`，与 S3 不是同一个东西。
+
+所以"重启 5 次"里的"重启"，不可能是 S3。它只能是：
+1. **`system_reset`**（QEMU 侧硬复位）—— 已验证 4/4 通过
+2. **guest 内 `reboot`**（PSCI SYSTEM_RESET，驱动走 warm reset 路径）
+3. **`SYSTEM_OFF` + 重新启动进程**（FINDINGS.md:22 记过 `reboot: Power down`）
+
+三种形态对网卡状态机的压力完全不同：
+`system_reset` 把设备拉到冷态、驱动从头初始化（最干净）；
+guest 内 `reboot` 走驱动 warm reset，中断/环形缓冲区状态可能残留；
+进程重启则一切都重建（最干净但最慢）。
+
+**如果原始观测是 guest 内 `reboot`，那 13.41 的 4/4 根本没测到它** ——
+和 P0-a 的"重启进程的短跑"完全同构：不是跑得不够多，是形态不对。
+
+#### 三、时代：13.9 远早于 13.26，数据默认有 doze 税
+
+时间线（git commit 时间）：
+
+| 节 | 位置 | 内容 | 日期 |
+|---|---|---|---|
+| **13.9** | 行 1989 | 网络压测（DHCP/ping/6×curl） | **11-15 前后** |
+| 13.26 | 行 3884 | ★ doze 真根因（suspend 冻结 MONOTONIC） | **11-17 13:07** |
+
+**网络观测比 doze 发现早了整整两天。** 那一时期的所有时间相关数字
+都已作废：`3–6 行/分钟`、`127 秒到 Shell`、`4/12/20 三档`。
+13.9 的吞吐数据同理，本来就标着"含 doze 税"。
+
+而 **`r4 那一轮慢 14 倍（0.58 MB/s vs 8.5 MB/s）现在高度可疑**。
+当时的归因是"slirp 单线程偶发"，但如果设备在那 14.96 秒里 suspend 过，
+**那个 14.96s 的计时本身就是错的** —— doze 冻结的正是 `CLOCK_MONOTONIC`，
+而 `time curl` 用的就是它。一个被冻结的计时器会把"实际 3 秒 + 睡了 12 秒"
+报成 14.96 秒。
+
+所以 13.9 那条"r4 离群是否 henge 特有 → 需 tap 对照"的悬案，
+**现在有了一个更便宜的候选解释**：doze。无需 tap 对照即可先排除它。
+（这也意味着"性能重定价"必须在 doze 已经被钉住的环境下重做 ——
+这一条本来就排在排期第 5 项。）
+
+#### 四、统计：我算错了，用户是对的
+
+我 13.41 写的 `0.2^4 = 0.16%` **把点估计当成了真值**。重算
+（Clopper-Pearson，n=5，x=4 失败）：
+
+```
+失败率 95% CI = [0.2836, 0.9949]        ← 下界只有 28.4%
+成功率上界     = 0.7164                  ← 不是 0.2！
+```
+
+| 轮数 | 保守（p=0.7164）全过概率 | 点估计（p=0.8）全过概率 |
+|---|---|---|
+| **4** | **26.34%** | 40.96% |
+| 10 | 3.56% | 10.74% |
+| 15 | 0.67% | 3.52% |
+| **20** | **0.127%** | 1.15% |
+| 30 | 0.005% | 0.12% |
+
+**4 轮全过在保守下界下是 26%，连"失败率 ≥28%"都排除不掉。**
+要压住 CI 下界需要 20 轮；点估计下 20 轮也只有 1.15%。
+
+所以"15–20 轮"这个数字本身是对的 —— 但它的效力**以形态对齐为前提**。
+形态错了，20 轮全过证明的是"另一个形态没有 bug"，与 8 轮、4 轮等价。
+
+#### 五、顺手查实的两个新事实（都不是 C6，但都会伪装成 C6）
+
+**(1) `Reached target multi-user.target` 在这台机器上永不出现。**
+
+13.40 我把 `systemd` 里程碑从 `systemd\[1\]`（不唯一，75 次/轮）改成
+`Reached target multi-user.target`。查历史：
+
+```
+nr-c6   multi-user=0   ci-info=4   169.254=4
+nr-s4   multi-user=0   ci-info=0
+nr-s16  multi-user=0   ci-info=0
+```
+
+**所有 run 里都是 0。** 原因在下一段。
+
+**(2) cloud-init 每次 boot 卡在 metadata 超时约 120 秒。**
+
+```
+[   92.0] cloud-init: No active metadata service found
+[  142.3] url_helper.py[WARNING]: Calling 'None' failed [50/120s]:
+         HTTPConnectionPool(host='169.254.169.254', port=80):
+         Connection to 169.254.169.254 timed out. (connect timeout=50.0)
+```
+
+slirp 环境下没有 metadata 服务，`169.254.169.254`（EC2/link-local 惯例地址）
+永远连不通，cloud-init 走满 120 秒重试窗口才放弃。**在那之前
+`multi-user.target` 不会到。**
+
+这解释了两件事：
+- 为什么"130 秒到 userspace"里绝大部分是 systemd 及其单元（13.37 已猜对一半，
+  现在有了具体名字：**cloud-init 的 metadata 超时**）
+- 为什么 `systemd` 里程碑判据永远 timeout
+
+**(3) （顺带）这是一个新的 C6 候选假设，排第四。**
+
+cloud-init 在 `network` 阶段会重配网卡。如果 reboot 恰好落在
+"DHCP 完成、cloud-init 还在等 metadata"这个窗口里，用户看到的现象
+就是"重启后网络有问题"—— 而 **DHCP 本身是好的**（ci-info 显示 10.0.2.15）。
+
+这与"地址拿到但不通"的读法吻合，而且**可以纯 serial 观测**：
+看每轮的 `ci-info` 时刻与 reset 时刻的相对位置。
+
+#### 六、结论：现在不该跑 20 轮
+
+| 前置条件 | 状态 | 含义 |
+|---|---|---|
+| 原始 reproducer | ❌ **不存在** | 不知道该复现什么 |
+| 形态 | ❌ **未知，且"S3"不成立** | 4/4 可能测的不是那个形态 |
+| 时代 | ⚠️ **doze 之前** | 历史数据默认有税 |
+| 统计 | ✅ 已修正 | 需要 20 轮（保守下界）**前提是形态对** |
+| 判据 | ✅ ci-info 可用；❌ multi-user 不可用 | 已修 |
+
+**在"不知道该测哪个形态"的前提上跑 20 轮，是在用一个昂贵的实验
+去验证一个可能不存在（或属于另一形态）的现象。这和 P0-a 那两轮
+排查归零是同一类错误。**
+
+#### 七、形态对齐需要什么（成本已探明）
+
+想测"guest 内 reboot"，必须有 guest 内的执行通道。三条候选的实测：
+
+| 通道 | 结果 |
+|---|---|
+| `ssh` | ❌ 镜像**没有 sshd**（`hf.log` 里 `grep -i ssh` 零命中，`hostfwd` 连接被 slirp 关闭）。seed.iso 里有 `ssh_pwauth: true` + `root/henge`，但 rootfs 没装 openssh-server |
+| serial 登录 | ❌ `login:` 零命中；`serial-getty@ttyAMA0` 没启动（只有 slice 被创建）。且当前 `-serial file:` 是单向的，要改成 `-chardev socket` 才能写 |
+| **改 seed.iso** | ✅ **可行且最干净**。seed 是 vdb 上 374 KB 的 NoCloud ISO，`user-data` 里已有 `bootcmd`/`runcmd`（往 `/dev/console` 打东西）。加一个 `power_state: {mode: reboot, delay: N}` 或一个 systemd timer 即可让 guest 自己周期 reboot —— **不依赖网络、不依赖登录** |
+
+所以形态对齐的路径是**造一份新 seed**（在沙箱里生成 ISO，push 到设备），
+不是在现有资产上多跑几轮。
+
