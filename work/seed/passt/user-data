@@ -1,0 +1,38 @@
+#cloud-config
+# passt 后端的端到端验证（不 reboot）
+datasource_list: [NoCloud, None]
+
+write_files:
+  - path: /usr/local/bin/passtprobe
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # passt 后端端到端验证：不 reboot，只跑一次判据
+      C=/dev/console
+      say() { echo "$@" >> $C; }
+      say "PASSTPROBE-BEGIN uptime=$(cut -d' ' -f1 /proc/uptime)"
+      ip -4 -o addr show 2>/dev/null | awk '{print "PASSTPROBE-ADDR "$2" "$4}' >> $C
+      ip -4 route 2>/dev/null | sed 's/^/PASSTPROBE-ROUTE /' >> $C
+      GW=$(ip -4 route 2>/dev/null | awk '/^default/{print $3; exit}')
+      say "PASSTPROBE-GW gw=${GW:-none}"
+
+      # 三态 TCP：refused=收到 RST=网络通；timeout=不通
+      # 单行 python -c，避免多行缩进进 YAML 块标量
+      tcp_state() {
+          python3 -c 'import socket,sys
+      try:
+          s=socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=4); s.close(); print("ok")
+      except ConnectionRefusedError: print("refused")
+      except socket.timeout: print("timeout")
+      except Exception as e: print("err:"+type(e).__name__)' "$1" "$2" 2>&1
+      }
+      if [ -n "$GW" ]; then say "PASSTPROBE-TCP-GW80 state=$(tcp_state "$GW" 80)"; fi
+
+      say "PASSTPROBE-CURL-TUNA code=$(timeout 25 curl -s -o /dev/null -w '%{http_code}' http://mirrors.tuna.tsinghua.edu.cn/ 2>/dev/null || echo 000)"
+      R=$(timeout 60 curl -s -o /dev/null -w '%{speed_download} %{http_code}' http://mirrors.tuna.tsinghua.edu.cn/debian/dists/bookworm/main/binary-arm64/Packages.xz 2>/dev/null || echo 0_000)
+      say "PASSTPROBE-THROUGHPUT Bps_code=$R"
+      say "PASSTPROBE-END"
+      sync
+
+runcmd:
+  - [ /usr/local/bin/passtprobe ]

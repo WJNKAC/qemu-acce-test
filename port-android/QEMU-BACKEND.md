@@ -6805,3 +6805,104 @@ socket 来自 socketpair 不需要 bind，**两个障碍同时消失**。
 
 **纪律：一个域"能做 A"不等于"能做 B"，每个能力单独实测。**
 
+
+---
+
+### 13.50 ★★★★★ passt 在 adb shell 域打通：5.72 MB/s、HTTP 200，13.47 的三个论断全错
+
+13.49 提的 socketpair + `--fd` 方案，一次做成。
+
+#### 一、实现：`work/probe/passtlaunch.c`（约 190 行）
+
+```
+passtlaunch [passt cmd...] -- [qemu cmd...]
+```
+
+- `socketpair(AF_UNIX, SOCK_STREAM, 0, sv)` → 两个已连接的端点
+- `dup2` 到固定号 **20 / 21**（launcher 刚启动只占 0/1/2，socketpair 给 3/4，20/21 必空）
+- 两次 `fork` + `execvp`，命令里的 `%PFD%` / `%QFD%` 替换成实际 fd 号
+- 父进程关掉两端（**必须关**：否则 QEMU 退出后 passt 读不到 EOF，会一直等）
+- 任一子进程退出 → 杀掉另一个 → 打印**是谁先退的**
+
+关键实现点（都踩过）：
+
+| 点 | 为什么 |
+|---|---|
+| `execvp` 而非 `execv` | `execv` 不搜 PATH，本轮本地测试第一版就栽在这（`exec python3 failed`） |
+| `dup2` 后显式清 `FD_CLOEXEC` | `dup2` 本身会清，但若 fd 恰好来自 socketpair 原 fd 则需兜底；不清就 exec 后 fd 消失 |
+| passt 先起，`usleep(300ms)` 再起 QEMU | QEMU 连过来时对端必须已在读 |
+| 父进程 `close` 两个 fd | 见上，否则 EOF 传不到 passt |
+
+#### 二、写后验证（四步，一步不缺）
+
+| 步 | 内容 | 结果 |
+|---|---|---|
+| 1 | 本地 `gcc -Wall -Wextra` | **零警告** |
+| 2 | 本地双 python 扮两端，验 fd 20/21 双向 | `qemu got: b'P->Q'` / `passt got: b'Q->P'` ✅ |
+| 3 | 设备冒烟：`passt -F %PFD% -- sleep 5` | passt 接受 `-F`，只剩 DNS 警告；加 `-D 223.5.5.5` 后消失 |
+| 4 | 设备完整：passt + QEMU + 验证 seed | **见下** |
+
+第 2 步是本地做的（x86），第 3/4 步在 vivo。
+
+#### 三、端到端结果（vivo V2156FA，adb shell 域，smp2）
+
+```
+PASSTPROBE-BEGIN uptime=92.86
+PASSTPROBE-ADDR  enp0s1 169.254.2.1/8                    ← passt 默认网段
+PASSTPROBE-ROUTE default via 192.168.1.1 ... src 169.254.2.1
+PASSTPROBE-GW    gw=192.168.1.1                          ← 宿主真实网关
+PASSTPROBE-TCP-GW80       state=refused                  ← 收到 RST = 网络通
+PASSTPROBE-CURL-TUNA      code=301                       ← HTTP 层通（跳 HTTPS）
+PASSTPROBE-THROUGHPUT     Bps_code=5719198 200            ← 5.72 MB/s，200 OK
+PASSTPROBE-END
+```
+
+**关键读数**：
+
+| 项 | 值 | 判读 |
+|---|---|---|
+| guest 地址 | `169.254.2.1/8` | passt 默认（**不是** slirp 的 10.0.2.15） |
+| 默认路由 | `via 192.168.1.1` | **宿主真实网关** —— 证明用的是宿主内核 TCP 栈 |
+| TCP-GW80 | `refused` | 按 `STATES.md`：**路径通**（RST 需完整栈） |
+| curl tuna | `301` | HTTP 层通 |
+| **吞吐** | **5.72 MB/s** | 与 slirp 基线 4.9–8.5 MB/s **同量级** |
+
+#### 四、13.47 的三个论断，逐个作废
+
+| 13.47 的说法 | 现在 |
+|---|---|
+| "根因是引擎 `devices/virtio_net.c` 的 `notify()` 早退" | ❌ **那份代码不在端口编译范围**（`meson.build` 只有 core/host/compat） |
+| "passt 吞吐 914 B/s 是 bug 值" | ❌ **5.72 MB/s**。914 B/s 是 `hv-linux` 那次 `-a 192.168.1.134` 参数错误的产物 |
+| "slirp 慢掩盖了引擎缺陷，passt 是压力源" | ❌ **两个后端同量级、都正常**。没有缺陷被掩盖 |
+
+第三个尤其要收回：它当时听起来很有洞察力（"慢后端掩盖了实现错误"），
+但前提是"passt 慢"——而 passt 不慢。**一个漂亮的推断，建在错的前提上。**
+
+#### 五、这解锁了什么
+
+1. **passt 从"不可用"变成"可用"**，且默认参数下性能正常
+2. **reboot 序列可以在 passt 上跑了** —— 这正是"重启丢网"最高危的形态
+   （外部进程 + UNIX socket，`system_reset` 不重启它，连接表可能与新租约不一致）
+3. C6 的结案范围限定（13.47 说的"只覆盖 slirp"）现在**有条件扩展**
+
+#### 六、启动方式（可复现）
+
+```sh
+cd /data/local/tmp
+export HV_PASST_NO_SECCOMP=1 HV_PASST_NO_SANDBOX=1 HV_PASST_NO_USERNS=1
+./passtlaunch \
+  ./passt -f -q -F %PFD% -D 223.5.5.5 \
+  -- \
+  ./q-p0a8 -L henge/bios -M virt,gic-version=3 -cpu max -m 2048 \
+    -display none -smp 2 -accel henge \
+    -drive if=pflash,format=raw,unit=0,file=henge/bios/edk2-aarch64-code.fd,readonly=on \
+    -drive if=pflash,format=raw,unit=1,file=<vars 副本> \
+    -drive if=none,id=d0,format=qcow2,file=<disk 副本> -device virtio-blk-pci,drive=d0 \
+    -netdev socket,id=n0,fd=%QFD% -device virtio-net-pci,netdev=n0 \
+    -serial file:<log> -monitor none
+```
+
+三条环境变量是**必须**的（passt 自装的 seccomp 白名单是 glibc 风格，bionic 下必死）。
+`-D` 也必须给（Android 无 `/etc/resolv.conf`，passt 取不到 nameserver）。
+**不要给 `-a` / `-g`** —— 给了宿主不拥有的地址会双峰（FINDINGS.md 归因）。
+
