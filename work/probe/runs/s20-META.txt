@@ -1,0 +1,15 @@
+run        : s20 (20 轮 reboot 序列，soak 门禁)
+started    : 2026-11-17T15:28:30Z
+commit     : 1c8ab23
+bin        : q-p0a8
+bin_md5    : 1fa90ae3050068dbc734a88ec53f165f
+seed       : seed-v2.iso
+seed_md5   : 14be8c3d637d161bcd90fcd7cb1cc6b0
+instance   : deb12-hv-1794929307
+disk_src   : deb12-clean.qcow2 (444, 无 netprobe)
+vars_src   : vars0.img (444, 擦除态)
+smp        : 2
+milestone  : netprobe OnBootSec=60 + reboot
+boot_id    : 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+uptime_at_start: 637978.14
+low_power_mode : 0 (已关闭)

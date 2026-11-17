@@ -6397,3 +6397,137 @@ low_power_mode_opened=1     ← 开着！
 **soak 不是 20 轮的拉长版。** 它的价值在第三种读法 ——
 所有短窗口都看不见的尾部行为。出现了就比 20 轮任何结果都重要。
 
+
+---
+
+### 13.47 ★★★★ 20 轮全过（18/18），但"passt 呢"问出了当前体系最大的盲区
+
+#### 一、20 轮门禁结果（实际 18 轮，timeout 设短）
+
+```
+轮次: BEGIN=18  END=18   ci-info=18   multi-user=18   seed_installed=1
+curl200=18/18
+TCP: 连上=1  拒绝=18（RST=网络通）  超时=0
+探针异常=0
+dsusp_ms=1  verdict=VALID
+boot_id: 起止一致（79bc06e8…）
+完整性: 每轮都有 END —— 无半途死
+per-instance: 第 18 轮仍在跑 —— 坑已绕过
+```
+
+跑 18 而不是 20：`seedtest.sh` 的 timeout 给了 1500 s，
+而 20 轮需要 `115 + 19×85 ≈ 1730 s`。**脚本按时间退出，不是按轮数。**
+
+统计上 18 轮与 20 轮等价（保守下界 p=0.7164）：
+
+| n | 保守全过概率 | 点估计全过概率 |
+|---|---|---|
+| 4 | 26.34% | 40.96% |
+| **18** | **0.247%** | 1.80% |
+| 20 | 0.127% | 1.15% |
+
+两者都远低于 5%，**足以否证"失败率 ≥ 28%"**。
+
+每轮 85 秒：60 s（`OnBootSec`）+ ~25 s（reboot → UEFI → 内核 → DHCP）。
+
+#### 二、★★ 但"passt 呢"—— 整个网络测试体系有一个盲区
+
+上面 18 轮、以及 13.35–13.45 的所有网络验证，**全部在 slirp 上**。
+passt 一次都没进过这个体系。这不是遗漏，是一条被 13.10 那句
+"非 root Android 上唯一的网络后端就是内置 slirp"**盖住**的缺口。
+
+**那句话要修正。** 当时的依据是"参考实现（WindowsiOS/WindowsPixel）
+只有 `net_slirp.c`"。但那是**参考实现的选择**，不是**平台的限制**。
+passt 已经证明能在设备上跑：
+
+```
+$ /data/local/tmp/passt --version
+passt 2026_10_02
+Copyright Red Hat
+rc=0
+```
+
+（六处 bionic 移植 + 四个环境变量开关，见 FINDINGS.md 第八节。）
+
+#### 三、passt 卡在哪 —— 根因是引擎的 `notify()` 早退，不是 passt
+
+实测（FINDINGS.md 第八节）：
+
+```
+DHCPACK  ✅   DNS ✅   HTTP 200 但收满 25 秒超时
+throughput: 914 B/s        ← slirp 同一 guest 同一 URL 是 10.6 MB/s
+[net] rx=90 sent=72 DROP=0   ← 数据九成传完，卡在收尾
+```
+
+根因在 `WindowsiOS/devices/virtio_net.c:15`：
+
+```c
+static void notify(HvVirtio *v, int q) {
+    HvVirtioNet *n = v->dev;
+    if (q != TXQ) return;   /* new receive buffers: nothing waiting to deliver */
+    ...
+}
+```
+
+**guest 通知 RXQ（补充接收缓冲）时直接 return**，假设"没有待投递的帧"。
+
+这个假设只在"帧投递是推送式"的后端成立：
+后端有帧就调 `hv_virtio_net_receive()`，它自己 pop RXQ。
+
+**但 `notify(RXQ)` 恰恰是"有帧可以投递了"的时刻。** 如果后端手上还压着帧
+（因为它上次 pop RXQ 时队列是空的），guest 补完缓冲后来通知，
+这里却直接 return —— **投递时机被丢掉，帧卡在后端，guest 等到超时。**
+
+**为什么 slirp 从不触发**：slirp 是同步逐帧的
+（`hv_net_poll` 每 tick 调一次，处理一帧），
+几乎不会有"待投递的帧"，所以这个早退从未被违反。
+
+> **所以：slirp 上"网络全通"不能证明 virtio-net 实现正确，
+> 只能证明"在这个慢后端下够用"。**
+
+这是一条比 passt 吞吐更重要的结论：**passt 不是"可选的第二个后端"，
+而是暴露引擎缺陷的压力源。** slirp 慢，掩盖了它。
+
+#### 四、passt 还是"重启丢网"最高危的形态 —— 而它从未被测过
+
+两种后端的架构本质不同：
+
+| | slirp | passt |
+|---|---|---|
+| 位置 | **QEMU 进程内**的用户态 TCP/IP 栈 | **外部独立进程** |
+| 连接 | `-netdev user` | `-netdev stream` + **UNIX socket** |
+| `system_reset` 时 | 栈随进程存活，状态不受影响 | **passt 进程不重启，但 socket 连接可能断** |
+| 内部 TCP 状态 | 与 guest 同生共死 | **passt 自己维护连接表，可能与 guest 新租约不一致** |
+
+**"地址拿到但不通"的经典场景，在 passt 上比在 slirp 上更容易出现**：
+guest reboot → 新 DHCP 租约 → 但 passt 侧还记着旧连接 / socket 已断。
+这正好是 C6 原本想描述的现象 —— 而 C6 的 18 轮验证**只覆盖了最安全的那条路**。
+
+**所以 C6 的结案范围必须限定**：
+- ✅ "在 slirp 后端、guest 内 reboot 形态、18 轮下，重启后 IPv4 与端到端全通"
+- ❌ 不能外推到 passt
+- ❌ 不能外推到 system_reset 形态（那是另一条，13.41 的 4 轮）
+
+#### 五、修法与排期位置
+
+**这是个引擎层 bug，不属于 passt 移植工作。** 修法是让 `notify(RXQ)`
+有机会触发投递：
+
+```c
+if (q == RXQ) {
+    /* guest 补了接收缓冲：把后端可能压着的帧投出去 */
+    if (n->kick) n->kick(n->opaque);
+    return;
+}
+```
+
+需要后端提供 `kick` 回调（"现在有缓冲了，重试投递"）。
+
+修完之后：
+1. passt 吞吐才能作为性能基线（现在 914 B/s 是 bug 值，不是性能）
+2. 才能跑 passt 的 reboot 序列 —— 那才是"重启丢网"的真正高危测试
+3. `notify()` 的假设要写进注释，否则下一个人还会这么写
+
+**排期：插在性能重定价之前。** 因为"性能重定价"如果只用 slirp，
+定出来的数是"慢后端下的可用性"，不是"引擎的能力上限"。
+

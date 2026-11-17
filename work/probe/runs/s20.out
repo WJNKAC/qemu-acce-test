@@ -1,0 +1,295 @@
+=== seedtest tag=s20 smp=2 max_rounds=20 timeout=1500s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=115s) ---
+  NETPROBE-BEGIN round=1 uptime=99.75
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 2 (t=195s) ---
+  NETPROBE-BEGIN round=2 uptime=60.43
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 3 (t=275s) ---
+  NETPROBE-BEGIN round=3 uptime=60.34
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+--- round 4 (t=360s) ---
+  NETPROBE-BEGIN round=4 uptime=60.86
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 5 (t=440s) ---
+  NETPROBE-BEGIN round=5 uptime=60.69
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+--- round 6 (t=525s) ---
+  NETPROBE-BEGIN round=6 uptime=61.19
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 7 (t=605s) ---
+  NETPROBE-BEGIN round=7 uptime=60.41
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 8 (t=685s) ---
+  NETPROBE-BEGIN round=8 uptime=60.32
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 9 (t=765s) ---
+  NETPROBE-BEGIN round=9 uptime=60.81
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+--- round 10 (t=850s) ---
+  NETPROBE-BEGIN round=10 uptime=60.42
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 11 (t=930s) ---
+  NETPROBE-BEGIN round=11 uptime=60.55
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+--- round 12 (t=1015s) ---
+  NETPROBE-BEGIN round=12 uptime=60.59
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 13 (t=1095s) ---
+  NETPROBE-BEGIN round=13 uptime=61.19
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 14 (t=1175s) ---
+  NETPROBE-BEGIN round=14 uptime=60.36
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 15 (t=1255s) ---
+  NETPROBE-BEGIN round=15 uptime=60.47
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-DNS53 state=err:OSError
+  NETPROBE-CURL code=200
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+--- round 16 (t=1335s) ---
+  NETPROBE-BEGIN round=16 uptime=61.13
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+--- round 17 (t=1415s) ---
+  NETPROBE-BEGIN round=17 uptime=60.76
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 10.0.2.15/24
+  NETPROBE-ROUTE default via 10.0.2.2 dev enp0s1 proto dhcp src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.0/24 dev enp0s1 proto kernel scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.2 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-ROUTE 10.0.2.3 dev enp0s1 proto dhcp scope link src 10.0.2.15 metric 100 
+  NETPROBE-GW gw=10.0.2.2
+
+=== 汇总 ===
+轮次: BEGIN=18  END=18   ci-info=18   multi-user=18   seed_installed=1
+地址行: 36   curl200=18/18   TCP: 连上=1 拒绝=18(RST=网络通) 超时=0
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=1  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+boot_id: 起始 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6   结束 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+★ per-instance 坑已绕过：第 18 轮仍在跑（cloud-init 模块早已失效）
