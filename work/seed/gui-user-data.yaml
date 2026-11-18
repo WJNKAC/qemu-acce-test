@@ -1,0 +1,102 @@
+#cloud-config
+#
+# GUI seed：在 Debian 12 客机里装一个最小可用图形栈，装完打标记、不重启。
+#
+# 为什么自己一份 seed 而不是改 user-data-v3：
+#   v3 装了 netprobe.timer（OnBootSec=60，到点就 reboot）。apt 装 xorg 要几分钟，
+#   中途被 reboot 会留下 dpkg 半装状态，比没装更糟。这份 seed 全程不 reboot。
+#
+# 为什么用 systemd-run 把 apt 扔到后台，而不是直接放 runcmd：
+#   runcmd 是阻塞的，apt 跑 5 分钟 cloud-init 就卡在那 5 分钟里。扔后台后
+#   runcmd 立刻返回，apt 自己跑自己的，进度只从 serial 看（host 侧轮询）。
+#
+# 装什么（最小可用，故意不含 GNOME/KDE）：
+#   xorg            显示服务器（Xorg + 驱动 + 基础工具）
+#   openbox         WM，依赖极少（约 3 MB），apt 里最小的可用窗口管理器
+#   xterm + xinit   能起点东西、能 startx
+#   fonts-dejavu    没字体的话 xterm 里全是方块
+#   dbus-x11        起会话时有些程序要 session bus
+#
+# 一律 --no-install-recommends：Debian 的 recommends 会把 xorg 从 ~100 MB
+# 撑到 ~400 MB（拉一堆输入法、主题、打印），对"能看见桌面"没有贡献。
+datasource_list: [NoCloud, None]
+
+write_files:
+  - path: /usr/local/bin/gui-install.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # ⚠ 所有输出都要显式 >> /dev/console。第一版直接 echo，结果全进了
+      # journal（systemd-run 的 unit，不是 tty），host 侧只看 serial 就以为
+      # "脚本没跑"。实际它跑了、也 Finished 了，只是我看不见。
+      # 教训：**给远程无人值守的脚本写日志，输出目的地要显式指定，不能靠继承。**
+      exec >> /dev/console 2>&1
+      echo "GUI-INSTALL-BEGIN $(date -u +%FT%TZ)"
+      echo "GUI-INSTALL-ENV PATH=$PATH"
+
+      echo "--- sources.list ---"
+      cat /etc/apt/sources.list 2>/dev/null || true
+      ls /etc/apt/sources.list.d/ 2>/dev/null || true
+
+      echo "--- apt-get update ---"
+      apt-get update 2>&1
+      RC_UPD=$?
+      echo "GUI-APT-UPDATE-RC=$RC_UPD"
+      # ⚠ rc=0 不代表成功：源全部解析失败时 apt-get update 仍返回 0，
+      # 只在 stderr 上打 "W: Failed to fetch ... Temporary failure resolving"。
+      # 13.65 实测就这么放过了一次，后面 install 才报 "Unable to locate package"。
+      # 所以判据要看"包索引到底有没有拿到"，不是看 rc。
+      if ! apt-cache policy xorg 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+          echo "GUI-INSTALL-FAILED 索引里没有 xorg（DNS/源问题）"
+          echo "--- 诊断 ---"
+          cat /etc/resolv.conf 2>/dev/null
+          getent hosts deb.debian.org 2>&1 || echo "getent 失败"
+          ip -4 route 2>/dev/null
+          exit 1
+      fi
+      echo "GUI-APT-INDEX-OK"
+
+      echo "--- apt-get install ---"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          xorg openbox xinit xterm fonts-dejavu-core dbus-x11 2>&1
+      RC_INST=$?
+      echo "GUI-APT-INSTALL-RC=$RC_INST"
+
+      echo "--- 结果核对 ---"
+      for b in /usr/bin/Xorg /usr/bin/openbox /usr/bin/xterm /usr/bin/startx; do
+          printf 'GUI-BIN %-20s %s\n' "$b" \
+              "$( [ -x "$b" ] && echo present || echo MISSING )"
+      done
+      dpkg-query -W -f='GUI-PKG ${Package} ${Version}\n' \
+          xserver-xorg-core openbox xterm xinit 2>/dev/null || true
+
+      echo "--- 配 tty1 自动登录 + 自动 startx（不装 display manager）---"
+      mkdir -p /etc/systemd/system/getty@tty1.service.d
+      printf '%s\n' \
+        '[Service]' \
+        'ExecStart=' \
+        'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
+        > /etc/systemd/system/getty@tty1.service.d/autologin.conf
+
+      printf '%s\n' \
+        '#!/bin/sh' \
+        "xsetroot -solid '#2b3a55' 2>/dev/null" \
+        "xterm -geometry 100x30+40+40 -fa 'DejaVu Sans Mono' -fs 12 &" \
+        'exec openbox' \
+        > /root/.xinitrc
+      chmod +x /root/.xinitrc
+
+      printf '%s\n' \
+        'if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then' \
+        '    exec startx -- -nolisten tcp' \
+        'fi' \
+        > /root/.profile
+
+      systemctl enable getty@tty1.service >/dev/null 2>&1 || true
+      echo "GUI-INSTALL-RC=$RC_INST"
+      echo "GUI-INSTALL-DONE $(date -u +%FT%TZ)"
+      sync
+
+runcmd:
+  # 扔后台：runcmd 立即返回，apt 自己跑。进度只从 serial 看。
+  - [ sh, -c, "systemd-run --unit=gui-install --collect --property=Type=oneshot /usr/local/bin/gui-install.sh >/dev/console 2>&1" ]

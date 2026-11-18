@@ -8660,3 +8660,133 @@ UEFI 在交接时留了这句话。所以"图形设备活着、但客机没在�
 结论：**limbo 的直接代码基本用不上**（版本差 6 个大版本、形态不同），
 但它把"Android 上 QEMU 前端长什么样"讲清楚了。真要独立使用，
 最省的路是**装一个现成 VNC 客户端**，而不是接 SDL。
+
+## 13.65 Debian 13.7 DVD-1 上手：ISO 落地 + GRUB 进 VNC + 两条 GUI 路线
+
+用户给了 `mirrors.bfsu.edu.cn` 的 arm64 DVD-1，问"怎么这么大、什么桌面"。
+这一节把 ISO 拆开量了一遍，并在设备上真跑起来。
+
+### 一、ISO 实测（不下载 4 GB 就能读）
+
+用 HTTP Range 只取元数据：PVD → 目录树 → `Packages.gz` → `MD5SUM.TXT`。
+
+| 项 | 实测 |
+|---|---|
+| 大小 | **3,993,284,608 B = 3.72 GiB** |
+| 套数 | **27 张的第 1 张**（ISO 内 `README.TXT`："possible to install and run Debian with only the Binary-1 disc"） |
+| 包数 | **4535 个 .deb**（main 4501 / contrib 3 / non-free-firmware 31） |
+| .deb 合计 | 3.22 GiB |
+| **全装完** | **约 12.9 GiB** |
+
+**为什么这么大**：它不是精简版，是"离线装完整系统"那一张 —— 安装器 + 最流行的
+4500 个包 + 非自由固件，全塞进一张盘。
+
+### 二、桌面：7 个全在，默认 GNOME
+
+按 `Packages` 的 `Installed-Size`/`Size` 分组求和（**专属包**，不含共用依赖）：
+
+| 桌面 | 包数 | `.deb` | 装出来 |
+|---|---|---|---|
+| **GNOME**（tasksel 默认） | 93 | 117 MB | 410 MB |
+| MATE | 61 | 116 MB | 514 MB |
+| KDE Plasma | 57 | 71 MB | 318 MB |
+| Xfce | 58 | 13 MB | 69 MB |
+| LXQt | 42 | 30 MB | 49 MB |
+| Cinnamon | 20 | 10 MB | 54 MB |
+| LXDE | 24 | 7 MB | 23 MB |
+
+共用底座（Xorg + libX/GL + GTK/Qt + 字体）：**379 包 / 559 MB `.deb` / 装出来 1750 MB**。
+所以 GNOME 全套 ≈ **2.2 GB**，LXDE ≈ **1.8 GB**（大头是共用的 Xorg 那套，不是桌面自己）。
+
+### 三、a：下载（已完成）
+
+```sh
+curl -L -C - --retry 5 -o debian-13.7.0-arm64-DVD-1.iso <镜像URL>
+```
+
+- 速度 36 MB/s，**1 分 15 秒**下完 3.72 GiB
+- SHA256 与镜像站 `SHA256SUMS` **逐字节一致**（`8a205a71…f92f9d7`）
+- 位置 `cache/iso/`，推设备用了 261 秒（14.6 MB/s）
+
+### 四、GRUB 菜单真的进了 VNC
+
+设备上 `-cdrom` 启动，UEFI 从 ISO 引导：
+
+```
+BdsDxe: starting Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+GNU GRUB  version 2.12-9+deb13u2
+```
+
+抓帧（1280×800）看到完整菜单：`Install` / **`Graphical install`** /
+`Advanced options ...` / `Accessible dark contrast installer menu ...` /
+`Install with speech synthesis`。蓝底白字、当前项高亮，**渲染完全正确** —— 见
+`deb13-grub-menu.png`。
+
+这是"VNC 能显示真实 Linux 引导界面"的第一个直接证据（13.64 只到 UEFI Shell）。
+
+### 五、b 第一次尝试失败，根因是我漏了 DNS
+
+在 Debian 12 客机里 `apt-get install xorg openbox ...` 全报
+`Unable to locate package`。往上翻：
+
+```
+Err:3 https://deb.debian.org/debian bookworm InRelease
+  Temporary failure resolving 'deb.debian.org'
+```
+
+**我启动时没给 `SLIRP_DNS_SERVER`** —— 13.55 修的那个"Android 无
+`/etc/resolv.conf` → 虚拟 DNS 地址整个不可路由"的坑，在我自己的命令行里又踩了一遍。
+
+更值得记的是第二个错：**`apt-get update` 全失败却返回 `rc=0`**——
+只在 stderr 打 `W: Failed to fetch`，我的脚本只看 `$?`，于是"检查通过"、
+继续去 install，才在下一步炸。改成看索引：
+
+```sh
+if ! apt-cache policy xorg | grep -q 'Candidate: [0-9]'; then
+    echo "GUI-INSTALL-FAILED 索引里没有 xorg"; exit 1
+fi
+```
+
+**判据要盯着"东西到底拿到了没有"，不是"命令返回了什么"。** 这是第七关
+（数字要带出处）在脚本层的同一条。
+
+### 六、b 第二次：DNS 通了，但源太慢
+
+带 `SLIRP_DNS_SERVER=223.5.5.5` 重跑，`apt-get update` 连上了
+`debian.map.fastly.net (140.248.166.132)`，但速度 **17.1 kB/s**，
+估算 `23min 43s` 才下完索引，后面还有 ~100 MB 的包。不可接受。
+
+未做：换国内源（`mirrors.bfsu.edu.cn` / `mirrors.tuna`）再跑一遍。
+这一条留给下一次，不是技术问题，是源选择问题。
+
+### 七、a 的图形安装器卡在"按键"上（重要）
+
+想在 VNC 里点 `Graphical install`，`sendkey down` / `sendkey ret` 发了，
+**GRUB 完全没反应**。查清了原因，不是猜测：
+
+- `sendkey` 走 QEMU 的**输入设备层**（PS/2 或 USB HID → 客机驱动）。
+- 这个 `-M virt` 配置里**没有任何键盘设备**（没 `-device usb-kbd`、
+  没 `virtio-keyboard-pci`）。
+- 而 GRUB 在 UEFI 下读的是**固件自己的键盘队列**，不是 QEMU 的输入队列。
+
+试着加 `virtio-keyboard-pci` + `virtio-tablet-pci` —— **QEMU 直接退出**，
+henge 不支持这个设备。`virtio-gpu` 能用、`virtio-keyboard` 不能，这条边界
+值得单独记。
+
+**结论：a 的图形安装器需要人手动点，不适合自动化。** 要自动化得走
+`auto=true` preseed 那条路（grub.cfg 里已经有这个菜单项），
+或者把 `grub.cfg` 改成默认 `Graphical install` 并加 timeout 0。
+
+### 八、两条路线的现状
+
+| | a（Debian 13 ISO） | b（现有 12 装桌面） |
+|---|---|---|
+| 下载 | ✅ 3.72 GiB，SHA256 通过 | 不需要 |
+| 引导 | ✅ GRUB 菜单进 VNC | — |
+| 图形安装器 | ⚠ 能看，但**需要手动按键**（无键盘设备） | — |
+| apt 装桌面 | — | ⚠ DNS 已修，源太慢，待换镜像 |
+| 版本 | **trixie 13**，与现有 12 基线不兼容 | 保持 12，门禁体系不用重跑 |
+
+**建议：b 走完（换源后约 10 分钟），a 用于"看图形安装器"这一个用途。**
+把 a 装成可用系统意味着所有 20 轮门禁、soak、DNS 基线作废重跑，
+这个代价不该为了"版本新一点"付。
