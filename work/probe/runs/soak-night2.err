@@ -1,0 +1,554 @@
+henge: del#64 defer=1 del_hit=4 del_miss=59 ram_reuse=3 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#128 defer=1 del_hit=4 del_miss=123 ram_reuse=3 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#192 defer=0 del_hit=4 del_miss=187 ram_reuse=3 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#256 defer=1 del_hit=4 del_miss=251 ram_reuse=3 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#320 defer=1 del_hit=5 del_miss=314 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#384 defer=1 del_hit=5 del_miss=378 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#448 defer=1 del_hit=5 del_miss=442 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#512 defer=0 del_hit=5 del_miss=506 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#576 defer=1 del_hit=5 del_miss=570 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#640 defer=1 del_hit=5 del_miss=634 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#704 defer=0 del_hit=5 del_miss=698 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#768 defer=1 del_hit=5 del_miss=762 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#832 defer=1 del_hit=5 del_miss=826 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#896 defer=1 del_hit=5 del_miss=890 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#960 defer=1 del_hit=6 del_miss=953 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1024 defer=1 del_hit=6 del_miss=1017 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1088 defer=1 del_hit=6 del_miss=1081 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1152 defer=0 del_hit=6 del_miss=1145 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#1216 defer=1 del_hit=7 del_miss=1208 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1280 defer=1 del_hit=7 del_miss=1272 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1344 defer=1 del_hit=7 del_miss=1336 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1408 defer=1 del_hit=7 del_miss=1400 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#1472 defer=1 del_hit=7 del_miss=1464 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1536 defer=1 del_hit=8 del_miss=1527 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1600 defer=1 del_hit=8 del_miss=1591 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1664 defer=1 del_hit=8 del_miss=1655 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1728 defer=0 del_hit=8 del_miss=1719 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#1792 defer=1 del_hit=9 del_miss=1782 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1856 defer=1 del_hit=9 del_miss=1846 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1920 defer=1 del_hit=9 del_miss=1910 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#1984 defer=1 del_hit=9 del_miss=1974 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2048 defer=1 del_hit=9 del_miss=2038 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2112 defer=1 del_hit=10 del_miss=2101 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2176 defer=1 del_hit=10 del_miss=2165 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2240 defer=1 del_hit=10 del_miss=2229 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2304 defer=0 del_hit=10 del_miss=2293 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2368 defer=1 del_hit=11 del_miss=2356 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2432 defer=0 del_hit=11 del_miss=2420 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2496 defer=1 del_hit=11 del_miss=2484 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2560 defer=1 del_hit=11 del_miss=2548 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2624 defer=1 del_hit=12 del_miss=2611 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2688 defer=1 del_hit=12 del_miss=2675 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2752 defer=1 del_hit=12 del_miss=2739 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#2816 defer=1 del_hit=12 del_miss=2803 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2880 defer=0 del_hit=12 del_miss=2867 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#2944 defer=1 del_hit=13 del_miss=2930 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3008 defer=0 del_hit=13 del_miss=2994 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3072 defer=1 del_hit=13 del_miss=3058 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3136 defer=1 del_hit=13 del_miss=3122 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#3200 defer=1 del_hit=14 del_miss=3185 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3264 defer=1 del_hit=14 del_miss=3249 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3328 defer=1 del_hit=14 del_miss=3313 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3392 defer=1 del_hit=14 del_miss=3377 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#3456 defer=1 del_hit=14 del_miss=3441 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3520 defer=1 del_hit=15 del_miss=3504 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3584 defer=0 del_hit=15 del_miss=3568 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3648 defer=1 del_hit=15 del_miss=3632 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#3712 defer=1 del_hit=15 del_miss=3696 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#3776 defer=1 del_hit=16 del_miss=3759 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3840 defer=1 del_hit=16 del_miss=3823 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3904 defer=1 del_hit=16 del_miss=3887 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#3968 defer=1 del_hit=16 del_miss=3951 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4032 defer=1 del_hit=17 del_miss=4014 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4096 defer=1 del_hit=17 del_miss=4078 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4160 defer=1 del_hit=17 del_miss=4142 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4224 defer=1 del_hit=17 del_miss=4206 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4288 defer=1 del_hit=17 del_miss=4270 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4352 defer=1 del_hit=18 del_miss=4333 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4416 defer=1 del_hit=18 del_miss=4397 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4480 defer=1 del_hit=18 del_miss=4461 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4544 defer=1 del_hit=18 del_miss=4525 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4608 defer=1 del_hit=19 del_miss=4588 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4672 defer=1 del_hit=19 del_miss=4652 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4736 defer=1 del_hit=19 del_miss=4716 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4800 defer=1 del_hit=19 del_miss=4780 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4864 defer=0 del_hit=19 del_miss=4844 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#4928 defer=1 del_hit=20 del_miss=4907 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#4992 defer=1 del_hit=20 del_miss=4971 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5056 defer=1 del_hit=20 del_miss=5035 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5120 defer=1 del_hit=20 del_miss=5099 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#5184 defer=1 del_hit=21 del_miss=5162 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5248 defer=1 del_hit=21 del_miss=5226 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5312 defer=1 del_hit=21 del_miss=5290 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5376 defer=1 del_hit=21 del_miss=5354 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#5440 defer=1 del_hit=21 del_miss=5418 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5504 defer=1 del_hit=22 del_miss=5481 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5568 defer=1 del_hit=22 del_miss=5545 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5632 defer=1 del_hit=22 del_miss=5609 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#5696 defer=1 del_hit=22 del_miss=5673 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#5760 defer=1 del_hit=23 del_miss=5736 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5824 defer=1 del_hit=23 del_miss=5800 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5888 defer=1 del_hit=23 del_miss=5864 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#5952 defer=0 del_hit=23 del_miss=5928 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#6016 defer=1 del_hit=24 del_miss=5991 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6080 defer=1 del_hit=24 del_miss=6055 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6144 defer=1 del_hit=24 del_miss=6119 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6208 defer=1 del_hit=24 del_miss=6183 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#6272 defer=1 del_hit=24 del_miss=6247 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#6336 defer=1 del_hit=25 del_miss=6310 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6400 defer=1 del_hit=25 del_miss=6374 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6464 defer=1 del_hit=25 del_miss=6438 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6528 defer=0 del_hit=25 del_miss=6502 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#6592 defer=1 del_hit=26 del_miss=6565 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6656 defer=1 del_hit=26 del_miss=6629 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6720 defer=1 del_hit=26 del_miss=6693 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6784 defer=1 del_hit=26 del_miss=6757 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#6848 defer=1 del_hit=26 del_miss=6821 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6912 defer=1 del_hit=27 del_miss=6884 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#6976 defer=1 del_hit=27 del_miss=6948 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7040 defer=0 del_hit=27 del_miss=7012 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=1
+henge: del#7104 defer=0 del_hit=27 del_miss=7076 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#7168 defer=1 del_hit=28 del_miss=7139 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7232 defer=1 del_hit=28 del_miss=7203 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7296 defer=1 del_hit=28 del_miss=7267 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7360 defer=1 del_hit=28 del_miss=7331 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#7424 defer=1 del_hit=29 del_miss=7394 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7488 defer=1 del_hit=29 del_miss=7458 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7552 defer=1 del_hit=29 del_miss=7522 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7616 defer=1 del_hit=29 del_miss=7586 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#7680 defer=0 del_hit=29 del_miss=7650 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#7744 defer=1 del_hit=30 del_miss=7713 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7808 defer=0 del_hit=30 del_miss=7777 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7872 defer=1 del_hit=30 del_miss=7841 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#7936 defer=1 del_hit=30 del_miss=7905 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#8000 defer=1 del_hit=31 del_miss=7968 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8064 defer=1 del_hit=31 del_miss=8032 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8128 defer=1 del_hit=31 del_miss=8096 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8192 defer=1 del_hit=31 del_miss=8160 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#8256 defer=1 del_hit=31 del_miss=8224 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#8320 defer=1 del_hit=32 del_miss=8287 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8384 defer=0 del_hit=32 del_miss=8351 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8448 defer=1 del_hit=32 del_miss=8415 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8512 defer=1 del_hit=32 del_miss=8479 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#8576 defer=1 del_hit=33 del_miss=8542 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8640 defer=1 del_hit=33 del_miss=8606 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8704 defer=1 del_hit=33 del_miss=8670 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8768 defer=1 del_hit=33 del_miss=8734 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#8832 defer=1 del_hit=33 del_miss=8798 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8896 defer=1 del_hit=34 del_miss=8861 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#8960 defer=0 del_hit=34 del_miss=8925 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9024 defer=1 del_hit=34 del_miss=8989 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9088 defer=1 del_hit=34 del_miss=9053 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9152 defer=1 del_hit=35 del_miss=9116 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9216 defer=1 del_hit=35 del_miss=9180 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9280 defer=1 del_hit=35 del_miss=9244 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9344 defer=1 del_hit=35 del_miss=9308 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9408 defer=1 del_hit=36 del_miss=9371 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9472 defer=1 del_hit=36 del_miss=9435 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9536 defer=1 del_hit=36 del_miss=9499 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9600 defer=1 del_hit=36 del_miss=9563 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9664 defer=1 del_hit=36 del_miss=9627 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9728 defer=1 del_hit=37 del_miss=9690 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9792 defer=1 del_hit=37 del_miss=9754 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9856 defer=1 del_hit=37 del_miss=9818 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#9920 defer=1 del_hit=37 del_miss=9882 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#9984 defer=1 del_hit=38 del_miss=9945 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10048 defer=1 del_hit=38 del_miss=10009 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10112 defer=1 del_hit=38 del_miss=10073 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10176 defer=1 del_hit=38 del_miss=10137 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#10240 defer=0 del_hit=38 del_miss=10201 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#10304 defer=1 del_hit=39 del_miss=10264 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10368 defer=1 del_hit=39 del_miss=10328 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10432 defer=1 del_hit=39 del_miss=10392 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10496 defer=1 del_hit=39 del_miss=10456 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#10560 defer=1 del_hit=40 del_miss=10519 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10624 defer=1 del_hit=40 del_miss=10583 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10688 defer=1 del_hit=40 del_miss=10647 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10752 defer=1 del_hit=40 del_miss=10711 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#10816 defer=1 del_hit=41 del_miss=10774 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10880 defer=1 del_hit=41 del_miss=10838 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#10944 defer=1 del_hit=41 del_miss=10902 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11008 defer=1 del_hit=41 del_miss=10966 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11072 defer=1 del_hit=41 del_miss=11030 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11136 defer=1 del_hit=42 del_miss=11093 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11200 defer=1 del_hit=42 del_miss=11157 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11264 defer=1 del_hit=42 del_miss=11221 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11328 defer=0 del_hit=42 del_miss=11285 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11392 defer=1 del_hit=43 del_miss=11348 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11456 defer=1 del_hit=43 del_miss=11412 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11520 defer=1 del_hit=43 del_miss=11476 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11584 defer=1 del_hit=43 del_miss=11540 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11648 defer=1 del_hit=43 del_miss=11604 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11712 defer=1 del_hit=44 del_miss=11667 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11776 defer=1 del_hit=44 del_miss=11731 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11840 defer=1 del_hit=44 del_miss=11795 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#11904 defer=0 del_hit=44 del_miss=11859 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#11968 defer=1 del_hit=45 del_miss=11922 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12032 defer=1 del_hit=45 del_miss=11986 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12096 defer=1 del_hit=45 del_miss=12050 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12160 defer=1 del_hit=45 del_miss=12114 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#12224 defer=1 del_hit=45 del_miss=12178 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12288 defer=1 del_hit=46 del_miss=12241 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12352 defer=1 del_hit=46 del_miss=12305 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12416 defer=0 del_hit=46 del_miss=12369 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=1
+henge: del#12480 defer=0 del_hit=46 del_miss=12433 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#12544 defer=1 del_hit=47 del_miss=12496 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12608 defer=1 del_hit=47 del_miss=12560 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12672 defer=1 del_hit=47 del_miss=12624 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+stats  3600s: blocks 0.05M/s, translated 18754/s (again: va 77% va+pa 76%; 4% of time, 4.6 insns, 16.0x), slow mem 14K/s, mrs 273K/s msr 19K/s sys 5K/s, exc 5344/s irq 518/s, tlb flush 22574/s, fetch walks 14K/s, wfi 305/s (55% idle), flushes 0/s (smc 27 ic 0 full 0), blocks held 453534 (126 MB, 44 full flushes), chained 19331/s ijc fills 39K/s resets 336/s, el1 pc fffffbfffdbf8024
+  cache drops/s: full 5, ASID 40, user VA 0, kernel VA 104, code 27 (whole user half 173, filter full 0, big user range 0)
+  block hash: 392987 buckets used, 52722 stale blocks, max chain 6, mean walk 1.2
+    worst: va ffff90a3b540 pa bf4bd540 flags 0 gen 0/0
+    worst: va ffff9423b540 pa bf4bd540 flags 0 gen 0/0
+    worst: va ffff9a92a43c pa bf4bc43c flags 0 gen 0/0
+    worst: va ffff9f027a70 pa 41c24a70 flags 0 gen 0/0
+    worst: va ffffa2b869a8 pa 41d249a8 flags 0 gen 0/0
+    worst: va ffff800008477050 pa 98a77050 flags 5 gen 0/0
+  code words: inline 33% out of line 57% literals 11%
+  new code pages 102/s; waits: tlbi acks 192/s 0.2%, device lock 0/s 0.0%, translation lock 124/s 0.3% (of one CPU)
+  light lookups failed/s: odd 6212, filters full 0, no mapping 130, no block yet 2191; walked 33K/s
+  big user-range TLBIs/s: 137 TLB only in the range, 0 with no cached targets to drop; big kernel ranges 0
+  TLBIs left to other CPUs/s: raced 140, every address space's cached targets 29, big range 0, ASID or all 22
+  remote drop races/s: walking 500, filling 115, during 156
+  inline words per insn 5.01: copy 41%x1.1 pcrel 4%x1.0 branch 19%x5.2 branch-reg 3%x11.5 memory 32%x9.9 pac 1%x1.1
+  user light fills: shared region 0K/s, elsewhere 7K/s
+  code-page protects/s: none 85, one entry 119, whole-TLB scans 0
+  slots: ram_reuse 4, retired_hit 0, epoch_stale 0, epoch_high_water 0
+  fast resume refused/s: state 0, exit request 9, interrupt 30, timer 373, not cached 317
+  WFE waits in place 128/s; exits chained as placed 1806/s; SVC/ERET resumed in place 10329/s
+  exit requests/s: TLBI posts 219, wakes 492 (of them device work 0), kick all 27, own 0
+  light refills 301K/s, light branch-cache fills 37K/s, chained to other pages 3413/s
+  process switches: 10764/s saved, 10122/s restored (135 entries each)
+  tlb misses K/s: el0 empty 3 el0 conflict 1 el1 empty 8 el1 conflict 0
+  slow mem causes K/s: mmio 2 code-page write 0 page end 6 tlb miss 6 other 4 entry-but-tag 0
+  slow mem K/s: single 8 pair 5 literal 0 ldra 0 ordered 1 excl 0 cas 0 casp 0 atomic 0 vec 0/0
+  ijc fills into: empty 0K/s, live other salt 1K/s, dead salt 18K/s, same salt 19K/s
+  light fills into: empty 1K/s, live other salt 1K/s, dead salt 36K/s, same salt 0K/s
+  misses at: RET 1K/s, BR/BLR 7K/s, B/BL 0K/s, conditional 0K/s, MSR 0K/s, other 0K/s, unknown 2K/s
+  entries 0.05M/s: chain fill 42%, kick 2%, exception/sysreg 1%, interrupt 1%, cached target 34%, cache miss 20%
+   S3_3_C14_C0_2: 269092 reads 0 writes/sys per s
+   S3_0_C2_C0_1: 0 reads 10991 writes/sys per s
+   S3_0_C6_C0_0: 0 reads 5368 writes/sys per s
+   S1_3_C7_C4_1: 0 reads 1965 writes/sys per s
+   S1_0_C8_C3_5: 0 reads 1743 writes/sys per s
+   S3_3_C14_C3_1: 803 reads 794 writes/sys per s
+   S3_3_C0_C0_1: 1285 reads 0 writes/sys per s
+   S1_0_C8_C3_7: 0 reads 973 writes/sys per s
+   S3_0_C0_C0_0: 585 reads 0 writes/sys per s
+   S3_0_C12_C12_1: 0 reads 518 writes/sys per s
+   S3_0_C12_C12_0: 518 reads 0 writes/sys per s
+   S3_0_C2_C0_0: 0 reads 516 writes/sys per s
+   S3_3_C14_C3_2: 13 reads 423 writes/sys per s
+   S1_0_C8_C7_3: 0 reads 357 writes/sys per s
+henge: del#12736 defer=1 del_hit=47 del_miss=12688 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#12800 defer=1 del_hit=48 del_miss=12751 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12864 defer=1 del_hit=48 del_miss=12815 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12928 defer=1 del_hit=48 del_miss=12879 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#12992 defer=1 del_hit=48 del_miss=12943 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13056 defer=0 del_hit=48 del_miss=13007 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13120 defer=1 del_hit=49 del_miss=13070 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13184 defer=0 del_hit=49 del_miss=13134 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13248 defer=1 del_hit=49 del_miss=13198 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13312 defer=1 del_hit=49 del_miss=13262 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13376 defer=1 del_hit=50 del_miss=13325 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13440 defer=1 del_hit=50 del_miss=13389 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13504 defer=1 del_hit=50 del_miss=13453 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13568 defer=1 del_hit=50 del_miss=13517 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13632 defer=1 del_hit=50 del_miss=13581 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13696 defer=1 del_hit=51 del_miss=13644 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13760 defer=0 del_hit=51 del_miss=13708 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13824 defer=1 del_hit=51 del_miss=13772 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#13888 defer=1 del_hit=51 del_miss=13836 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#13952 defer=1 del_hit=52 del_miss=13899 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14016 defer=1 del_hit=52 del_miss=13963 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14080 defer=1 del_hit=52 del_miss=14027 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14144 defer=1 del_hit=52 del_miss=14091 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#14208 defer=1 del_hit=52 del_miss=14155 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14272 defer=1 del_hit=53 del_miss=14218 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14336 defer=0 del_hit=53 del_miss=14282 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14400 defer=1 del_hit=53 del_miss=14346 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#14464 defer=1 del_hit=53 del_miss=14410 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#14528 defer=1 del_hit=54 del_miss=14473 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14592 defer=1 del_hit=54 del_miss=14537 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14656 defer=1 del_hit=54 del_miss=14601 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14720 defer=1 del_hit=54 del_miss=14665 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#14784 defer=1 del_hit=55 del_miss=14728 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14848 defer=1 del_hit=55 del_miss=14792 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14912 defer=1 del_hit=55 del_miss=14856 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#14976 defer=1 del_hit=55 del_miss=14920 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#15040 defer=1 del_hit=55 del_miss=14984 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#15104 defer=1 del_hit=56 del_miss=15047 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15168 defer=1 del_hit=56 del_miss=15111 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15232 defer=1 del_hit=56 del_miss=15175 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15296 defer=1 del_hit=56 del_miss=15239 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#15360 defer=1 del_hit=57 del_miss=15302 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15424 defer=1 del_hit=57 del_miss=15366 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15488 defer=1 del_hit=57 del_miss=15430 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15552 defer=1 del_hit=57 del_miss=15494 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#15616 defer=1 del_hit=57 del_miss=15558 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15680 defer=1 del_hit=58 del_miss=15621 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15744 defer=1 del_hit=58 del_miss=15685 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#15808 defer=0 del_hit=58 del_miss=15749 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=1
+henge: del#15872 defer=1 del_hit=58 del_miss=15813 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#15936 defer=1 del_hit=59 del_miss=15876 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16000 defer=1 del_hit=59 del_miss=15940 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16064 defer=1 del_hit=59 del_miss=16004 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16128 defer=1 del_hit=59 del_miss=16068 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#16192 defer=1 del_hit=60 del_miss=16131 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16256 defer=1 del_hit=60 del_miss=16195 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16320 defer=1 del_hit=60 del_miss=16259 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16384 defer=1 del_hit=60 del_miss=16323 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#16448 defer=1 del_hit=60 del_miss=16387 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#16512 defer=1 del_hit=61 del_miss=16450 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16576 defer=1 del_hit=61 del_miss=16514 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16640 defer=1 del_hit=61 del_miss=16578 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16704 defer=0 del_hit=61 del_miss=16642 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#16768 defer=1 del_hit=62 del_miss=16705 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16832 defer=1 del_hit=62 del_miss=16769 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16896 defer=1 del_hit=62 del_miss=16833 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#16960 defer=1 del_hit=62 del_miss=16897 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17024 defer=1 del_hit=62 del_miss=16961 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17088 defer=1 del_hit=63 del_miss=17024 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17152 defer=1 del_hit=63 del_miss=17088 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17216 defer=1 del_hit=63 del_miss=17152 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17280 defer=0 del_hit=63 del_miss=17216 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17344 defer=1 del_hit=64 del_miss=17279 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17408 defer=1 del_hit=64 del_miss=17343 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17472 defer=1 del_hit=64 del_miss=17407 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17536 defer=1 del_hit=64 del_miss=17471 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17600 defer=1 del_hit=64 del_miss=17535 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17664 defer=1 del_hit=65 del_miss=17598 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17728 defer=1 del_hit=65 del_miss=17662 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17792 defer=1 del_hit=65 del_miss=17726 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17856 defer=0 del_hit=65 del_miss=17790 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#17920 defer=1 del_hit=66 del_miss=17853 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#17984 defer=1 del_hit=66 del_miss=17917 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18048 defer=1 del_hit=66 del_miss=17981 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18112 defer=1 del_hit=66 del_miss=18045 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#18176 defer=1 del_hit=67 del_miss=18108 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18240 defer=1 del_hit=67 del_miss=18172 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18304 defer=1 del_hit=67 del_miss=18236 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18368 defer=1 del_hit=67 del_miss=18300 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#18432 defer=0 del_hit=67 del_miss=18364 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#18496 defer=1 del_hit=68 del_miss=18427 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18560 defer=0 del_hit=68 del_miss=18491 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18624 defer=1 del_hit=68 del_miss=18555 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18688 defer=1 del_hit=68 del_miss=18619 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#18752 defer=1 del_hit=69 del_miss=18682 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18816 defer=1 del_hit=69 del_miss=18746 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18880 defer=1 del_hit=69 del_miss=18810 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#18944 defer=1 del_hit=69 del_miss=18874 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#19008 defer=1 del_hit=69 del_miss=18938 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19072 defer=1 del_hit=70 del_miss=19001 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19136 defer=0 del_hit=70 del_miss=19065 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19200 defer=1 del_hit=70 del_miss=19129 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19264 defer=1 del_hit=70 del_miss=19193 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#19328 defer=1 del_hit=71 del_miss=19256 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19392 defer=1 del_hit=71 del_miss=19320 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19456 defer=1 del_hit=71 del_miss=19384 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19520 defer=1 del_hit=71 del_miss=19448 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#19584 defer=1 del_hit=71 del_miss=19512 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19648 defer=1 del_hit=72 del_miss=19575 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19712 defer=0 del_hit=72 del_miss=19639 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19776 defer=1 del_hit=72 del_miss=19703 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#19840 defer=1 del_hit=72 del_miss=19767 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#19904 defer=1 del_hit=73 del_miss=19830 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#19968 defer=1 del_hit=73 del_miss=19894 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20032 defer=1 del_hit=73 del_miss=19958 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20096 defer=1 del_hit=73 del_miss=20022 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#20160 defer=1 del_hit=74 del_miss=20085 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20224 defer=1 del_hit=74 del_miss=20149 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20288 defer=1 del_hit=74 del_miss=20213 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20352 defer=1 del_hit=74 del_miss=20277 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#20416 defer=1 del_hit=74 del_miss=20341 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#20480 defer=1 del_hit=75 del_miss=20404 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20544 defer=1 del_hit=75 del_miss=20468 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20608 defer=1 del_hit=75 del_miss=20532 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20672 defer=1 del_hit=75 del_miss=20596 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#20736 defer=1 del_hit=76 del_miss=20659 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20800 defer=1 del_hit=76 del_miss=20723 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20864 defer=1 del_hit=76 del_miss=20787 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#20928 defer=1 del_hit=76 del_miss=20851 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#20992 defer=1 del_hit=76 del_miss=20915 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21056 defer=1 del_hit=77 del_miss=20978 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21120 defer=1 del_hit=77 del_miss=21042 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21184 defer=0 del_hit=77 del_miss=21106 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=1
+henge: del#21248 defer=1 del_hit=77 del_miss=21170 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#21312 defer=1 del_hit=78 del_miss=21233 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21376 defer=1 del_hit=78 del_miss=21297 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21440 defer=1 del_hit=78 del_miss=21361 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21504 defer=1 del_hit=78 del_miss=21425 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#21568 defer=1 del_hit=79 del_miss=21488 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21632 defer=1 del_hit=79 del_miss=21552 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21696 defer=1 del_hit=79 del_miss=21616 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21760 defer=1 del_hit=79 del_miss=21680 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#21824 defer=1 del_hit=79 del_miss=21744 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#21888 defer=1 del_hit=80 del_miss=21807 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#21952 defer=1 del_hit=80 del_miss=21871 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22016 defer=1 del_hit=80 del_miss=21935 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22080 defer=0 del_hit=80 del_miss=21999 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#22144 defer=1 del_hit=81 del_miss=22062 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22208 defer=1 del_hit=81 del_miss=22126 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22272 defer=1 del_hit=81 del_miss=22190 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22336 defer=1 del_hit=81 del_miss=22254 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#22400 defer=1 del_hit=81 del_miss=22318 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22464 defer=1 del_hit=82 del_miss=22381 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22528 defer=1 del_hit=82 del_miss=22445 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22592 defer=1 del_hit=82 del_miss=22509 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22656 defer=0 del_hit=82 del_miss=22573 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#22720 defer=1 del_hit=83 del_miss=22636 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22784 defer=1 del_hit=83 del_miss=22700 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22848 defer=1 del_hit=83 del_miss=22764 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#22912 defer=1 del_hit=83 del_miss=22828 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#22976 defer=1 del_hit=83 del_miss=22892 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23040 defer=1 del_hit=84 del_miss=22955 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23104 defer=1 del_hit=84 del_miss=23019 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23168 defer=1 del_hit=84 del_miss=23083 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#23232 defer=0 del_hit=84 del_miss=23147 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#23296 defer=1 del_hit=85 del_miss=23210 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23360 defer=0 del_hit=85 del_miss=23274 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23424 defer=1 del_hit=85 del_miss=23338 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23488 defer=1 del_hit=85 del_miss=23402 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#23552 defer=1 del_hit=86 del_miss=23465 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23616 defer=1 del_hit=86 del_miss=23529 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23680 defer=1 del_hit=86 del_miss=23593 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23744 defer=1 del_hit=86 del_miss=23657 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#23808 defer=0 del_hit=86 del_miss=23721 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#23872 defer=1 del_hit=87 del_miss=23784 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#23936 defer=0 del_hit=87 del_miss=23848 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24000 defer=1 del_hit=87 del_miss=23912 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24064 defer=1 del_hit=87 del_miss=23976 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#24128 defer=1 del_hit=88 del_miss=24039 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24192 defer=1 del_hit=88 del_miss=24103 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24256 defer=1 del_hit=88 del_miss=24167 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24320 defer=1 del_hit=88 del_miss=24231 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#24384 defer=1 del_hit=88 del_miss=24295 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24448 defer=1 del_hit=89 del_miss=24358 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24512 defer=0 del_hit=89 del_miss=24422 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24576 defer=0 del_hit=89 del_miss=24486 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=0
+henge: del#24640 defer=1 del_hit=89 del_miss=24550 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#24704 defer=1 del_hit=90 del_miss=24613 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24768 defer=1 del_hit=90 del_miss=24677 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#24832 defer=1 del_hit=90 del_miss=24741 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+stats  7200s: blocks 0.05M/s, translated 18615/s (again: va 99% va+pa 99%; 4% of time, 4.6 insns, 16.0x), slow mem 14K/s, mrs 270K/s msr 19K/s sys 5K/s, exc 5358/s irq 519/s, tlb flush 22689/s, fetch walks 14K/s, wfi 305/s (54% idle), flushes 0/s (smc 27 ic 0 full 0), blocks held 152329 (44 MB, 87 full flushes), chained 19192/s ijc fills 39K/s resets 337/s, el1 pc fffffbfffdbf7c00
+  cache drops/s: full 5, ASID 40, user VA 0, kernel VA 114, code 27 (whole user half 175, filter full 0, big user range 0)
+  block hash: 139712 buckets used, 25781 stale blocks, max chain 3, mean walk 1.0
+    worst: va ffff8000086f67ec pa 98cf67ec flags 5 gen 2/2
+    worst: va aaaab5146f40 pa 41b5ef40 flags 0 gen 0/0
+    worst: va 4768b8e0 pa 4768b8e0 flags 5 gen 0/0
+  code words: inline 33% out of line 57% literals 11%
+  new code pages 102/s; waits: tlbi acks 190/s 0.2%, device lock 0/s 0.0%, translation lock 120/s 0.3% (of one CPU)
+  light lookups failed/s: odd 6214, filters full 0, no mapping 130, no block yet 2173; walked 34K/s
+  big user-range TLBIs/s: 138 TLB only in the range, 0 with no cached targets to drop; big kernel ranges 0
+  TLBIs left to other CPUs/s: raced 140, every address space's cached targets 28, big range 0, ASID or all 22
+  remote drop races/s: walking 498, filling 115, during 153
+  inline words per insn 5.00: copy 41%x1.1 pcrel 4%x1.0 branch 19%x5.2 branch-reg 3%x11.5 memory 32%x9.9 pac 1%x1.1
+  user light fills: shared region 0K/s, elsewhere 7K/s
+  code-page protects/s: none 86, one entry 119, whole-TLB scans 0
+  slots: ram_reuse 4, retired_hit 0, epoch_stale 0, epoch_high_water 0
+  fast resume refused/s: state 0, exit request 9, interrupt 31, timer 380, not cached 315
+  WFE waits in place 129/s; exits chained as placed 1788/s; SVC/ERET resumed in place 10353/s
+  exit requests/s: TLBI posts 217, wakes 493 (of them device work 0), kick all 27, own 0
+  light refills 302K/s, light branch-cache fills 38K/s, chained to other pages 3387/s
+  process switches: 10799/s saved, 10146/s restored (134 entries each)
+  tlb misses K/s: el0 empty 3 el0 conflict 1 el1 empty 8 el1 conflict 0
+  slow mem causes K/s: mmio 2 code-page write 0 page end 6 tlb miss 6 other 4 entry-but-tag 0
+  slow mem K/s: single 8 pair 5 literal 0 ldra 0 ordered 1 excl 0 cas 0 casp 0 atomic 0 vec 0/0
+  ijc fills into: empty 0K/s, live other salt 1K/s, dead salt 18K/s, same salt 19K/s
+  light fills into: empty 0K/s, live other salt 1K/s, dead salt 37K/s, same salt 0K/s
+  misses at: RET 1K/s, BR/BLR 7K/s, B/BL 0K/s, conditional 0K/s, MSR 0K/s, other 0K/s, unknown 2K/s
+  entries 0.05M/s: chain fill 42%, kick 2%, exception/sysreg 1%, interrupt 1%, cached target 34%, cache miss 20%
+   S3_3_C14_C0_2: 266297 reads 0 writes/sys per s
+   S3_0_C2_C0_1: 0 reads 11034 writes/sys per s
+   S3_0_C6_C0_0: 0 reads 5382 writes/sys per s
+   S1_3_C7_C4_1: 0 reads 1970 writes/sys per s
+   S1_0_C8_C3_5: 0 reads 1763 writes/sys per s
+   S3_3_C14_C3_1: 803 reads 794 writes/sys per s
+   S3_3_C0_C0_1: 1286 reads 0 writes/sys per s
+   S1_0_C8_C3_7: 0 reads 972 writes/sys per s
+   S3_0_C0_C0_0: 600 reads 0 writes/sys per s
+   S3_0_C2_C0_0: 0 reads 545 writes/sys per s
+   S3_0_C12_C12_1: 0 reads 519 writes/sys per s
+   S3_0_C12_C12_0: 519 reads 0 writes/sys per s
+   S3_3_C14_C3_2: 13 reads 423 writes/sys per s
+   S1_0_C8_C7_3: 0 reads 357 writes/sys per s
+henge: del#24896 defer=1 del_hit=90 del_miss=24805 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#24960 defer=1 del_hit=91 del_miss=24868 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25024 defer=1 del_hit=91 del_miss=24932 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25088 defer=1 del_hit=91 del_miss=24996 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25152 defer=1 del_hit=91 del_miss=25060 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#25216 defer=1 del_hit=91 del_miss=25124 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#25280 defer=1 del_hit=92 del_miss=25187 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25344 defer=1 del_hit=92 del_miss=25251 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25408 defer=1 del_hit=92 del_miss=25315 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25472 defer=1 del_hit=92 del_miss=25379 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#25536 defer=1 del_hit=93 del_miss=25442 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25600 defer=1 del_hit=93 del_miss=25506 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25664 defer=1 del_hit=93 del_miss=25570 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25728 defer=1 del_hit=93 del_miss=25634 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#25792 defer=1 del_hit=93 del_miss=25698 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#25856 defer=1 del_hit=94 del_miss=25761 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25920 defer=1 del_hit=94 del_miss=25825 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#25984 defer=1 del_hit=94 del_miss=25889 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26048 defer=1 del_hit=94 del_miss=25953 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#26112 defer=1 del_hit=95 del_miss=26016 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26176 defer=1 del_hit=95 del_miss=26080 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26240 defer=1 del_hit=95 del_miss=26144 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26304 defer=1 del_hit=95 del_miss=26208 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#26368 defer=1 del_hit=95 del_miss=26272 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26432 defer=1 del_hit=96 del_miss=26335 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26496 defer=1 del_hit=96 del_miss=26399 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26560 defer=1 del_hit=96 del_miss=26463 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#26624 defer=1 del_hit=96 del_miss=26527 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#26688 defer=1 del_hit=97 del_miss=26590 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26752 defer=1 del_hit=97 del_miss=26654 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26816 defer=1 del_hit=97 del_miss=26718 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#26880 defer=0 del_hit=97 del_miss=26782 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#26944 defer=1 del_hit=98 del_miss=26845 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27008 defer=1 del_hit=98 del_miss=26909 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27072 defer=1 del_hit=98 del_miss=26973 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27136 defer=1 del_hit=98 del_miss=27037 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#27200 defer=1 del_hit=98 del_miss=27101 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#27264 defer=1 del_hit=99 del_miss=27164 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27328 defer=1 del_hit=99 del_miss=27228 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27392 defer=1 del_hit=99 del_miss=27292 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27456 defer=0 del_hit=99 del_miss=27356 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#27520 defer=1 del_hit=100 del_miss=27419 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27584 defer=1 del_hit=100 del_miss=27483 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27648 defer=1 del_hit=100 del_miss=27547 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27712 defer=1 del_hit=100 del_miss=27611 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#27776 defer=1 del_hit=100 del_miss=27675 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27840 defer=1 del_hit=101 del_miss=27738 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27904 defer=1 del_hit=101 del_miss=27802 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#27968 defer=1 del_hit=101 del_miss=27866 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28032 defer=0 del_hit=101 del_miss=27930 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#28096 defer=1 del_hit=102 del_miss=27993 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28160 defer=1 del_hit=102 del_miss=28057 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28224 defer=1 del_hit=102 del_miss=28121 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28288 defer=1 del_hit=102 del_miss=28185 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#28352 defer=1 del_hit=102 del_miss=28249 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28416 defer=1 del_hit=103 del_miss=28312 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28480 defer=1 del_hit=103 del_miss=28376 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28544 defer=1 del_hit=103 del_miss=28440 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#28608 defer=0 del_hit=103 del_miss=28504 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#28672 defer=1 del_hit=104 del_miss=28567 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28736 defer=0 del_hit=104 del_miss=28631 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28800 defer=1 del_hit=104 del_miss=28695 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28864 defer=1 del_hit=104 del_miss=28759 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#28928 defer=1 del_hit=105 del_miss=28822 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#28992 defer=1 del_hit=105 del_miss=28886 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29056 defer=1 del_hit=105 del_miss=28950 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29120 defer=1 del_hit=105 del_miss=29014 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#29184 defer=0 del_hit=105 del_miss=29078 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#29248 defer=1 del_hit=106 del_miss=29141 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29312 defer=0 del_hit=106 del_miss=29205 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29376 defer=1 del_hit=106 del_miss=29269 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29440 defer=1 del_hit=106 del_miss=29333 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#29504 defer=1 del_hit=107 del_miss=29396 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29568 defer=1 del_hit=107 del_miss=29460 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29632 defer=1 del_hit=107 del_miss=29524 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29696 defer=1 del_hit=107 del_miss=29588 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=2
+henge: del#29760 defer=1 del_hit=107 del_miss=29652 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29824 defer=1 del_hit=108 del_miss=29715 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#29888 defer=0 del_hit=108 del_miss=29779 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3

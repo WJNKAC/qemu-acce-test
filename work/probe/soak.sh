@@ -148,16 +148,22 @@ else
     sleep 1
 fi
 
-$BIN -L "$BIOS" -M virt,gic-version=3 -cpu max -m 2048 \
-    -display none -smp "$SMP" -accel henge \
-    -drive if=pflash,format=raw,unit=0,file=$BIOS/edk2-aarch64-code.fd,readonly=on \
-    -drive if=pflash,format=raw,unit=1,file=$VARS \
-    -drive if=none,id=d0,format=qcow2,file=$DISK -device virtio-blk-pci,drive=d0 \
-    -drive if=none,id=sd,format=raw,file=$SEED -device virtio-blk-pci,drive=sd \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-    -serial file:$LOG -monitor tcp:127.0.0.1:$MPORT,server,nowait \
-    >/dev/null 2>"$ERR" &
-QP=$!
+# 启动抽成函数：停顿恢复要能"杀掉重来"。台面参数只有 vars 会换
+# （UEFI 引导项累积/菜单卡死的现场，换一份干净 varstore 就绕开了）。
+launch_vm() {
+    $BIN -L "$BIOS" -M virt,gic-version=3 -cpu max -m 2048 \
+        -display none -smp "$SMP" -accel henge \
+        -drive if=pflash,format=raw,unit=0,file=$BIOS/edk2-aarch64-code.fd,readonly=on \
+        -drive if=pflash,format=raw,unit=1,file=$VARS \
+        -drive if=none,id=d0,format=qcow2,file=$DISK -device virtio-blk-pci,drive=d0 \
+        -drive if=none,id=sd,format=raw,file=$SEED -device virtio-blk-pci,drive=sd \
+        -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+        -serial file:$LOG -monitor tcp:127.0.0.1:$MPORT,server,nowait \
+        >/dev/null 2>"$ERR" &
+    QP=$!
+}
+launch_vm
+sleep 1
 
 killtree() {
     for _k in $(pgrep -P "$1" 2>/dev/null); do killtree "$_k"; done
@@ -184,7 +190,9 @@ mon() { printf '%s\r' "$1" | timeout 6 nc 127.0.0.1 "$MPORT" 2>/dev/null; }
 
 # 停顿判定阈值（秒）。默认 900 = OnBootSec(60) 的 15 倍。
 STALL_SEC=${STALL_SEC:-900}
-RECOVER=0
+RECOVER=0        # 1=回车救回；>1=重启救回（累加）
+NRESTART=0
+MAXRESTART=${MAXRESTART:-3}   # 连重启都救不回来，说明不是"掉菜单"这种形态，退出
 
 set -- $($H/vclk); M0=$1; B0=$2
 SUSP=0
@@ -236,10 +244,17 @@ while [ "$(date +%s)" -lt "$END" ]; do
                 tail -20 "$LOG" 2>/dev/null
             } >> $H/soak-$TAG.summary 2>/dev/null
 
-            # 13.59：night1 的那次停顿停在 UEFI Boot Manager 菜单
-            # （serial 上是 ESC[2J/ESC[01;01H 反复刷屏，且 QEMU 还活着）。
-            # 那种情况下**只要一个回车就能继续**，不该让整夜到此为止。
-            # 所以先试着敲回车，能继续就继续，并记为 RECOVERED。
+            # 两级恢复。**顺序不能反，也不能只想第一级**：
+            #
+            #   1 级  sendkey ret：便宜，若停在"有可引导项的菜单"上就够。
+            #   2 级  换干净 varstore 重启 QEMU：这一级才是兜底。
+            #
+            # 为什么必须有 2 级：13.59 我写"只要一个回车就能继续"，那是**假设**。
+            # 那个菜单里的 5 个引导项本身就是坏的（每轮 `start failed`），
+            # 回车很可能只是把坏项再试一遍 —— 所以 1 级失败不等于"救不了"，
+            # 只是说明这条路对这个故障形态无效。
+            # 换 varstore 重启是被对照实验 B 验证过的（干净 vars + 同一块盘 =
+            # 正常启动），所以它能救。
             for _try in 1 2 3; do
                 mon "sendkey ret" >/dev/null 2>&1
                 sleep 20
@@ -248,10 +263,33 @@ while [ "$(date +%s)" -lt "$END" ]; do
                 kill -0 $QP 2>/dev/null || break
             done
             if [ "$RECOVER" = 1 ]; then
-                echo "## RECOVERED after sendkey ret (round $RN -> $_new)" >> $H/soak-$TAG.summary
+                echo "## RECOVERED by sendkey ret (round $RN -> $_new)" >> $H/soak-$TAG.summary
                 LAST=$_new; STALL=0
+            elif [ "$NRESTART" -lt "$MAXRESTART" ]; then
+                NRESTART=$((NRESTART + 1))
+                {
+                    echo "## RESTART #$NRESTART at round=$RN（回车无效，换干净 varstore 重启）"
+                } >> $H/soak-$TAG.summary
+                killtree "$QP"
+                cp -f "$VARS_SRC" "$VARS" 2>/dev/null; chmod 644 "$VARS" 2>/dev/null
+                launch_vm
+                _w=0
+                while [ "$_w" -lt 180 ]; do
+                    sleep 10; _w=$((_w + 10))
+                    _new=$((ACC_BEGIN + $(cnt 'NETPROBE-BEGIN')))
+                    [ "$_new" -gt "$RN" ] && break
+                    kill -0 $QP 2>/dev/null || break
+                done
+                if [ "$_new" -gt "$RN" ]; then
+                    RECOVER=$((RECOVER + 1))
+                    echo "## RECOVERED by restart (round $RN -> $_new)" >> $H/soak-$TAG.summary
+                    LAST=$_new; STALL=0
+                else
+                    echo "!! 重启后仍无新轮次（${_w}s）—— 记录现场后退出" >> $H/soak-$TAG.summary
+                    break
+                fi
             else
-                echo "!! 恢复失败：3 次回车后仍无新轮次 —— 记录现场后退出" >> $H/soak-$TAG.summary
+                echo "!! 恢复失败：回车无效且已重启 $NRESTART 次 —— 退出" >> $H/soak-$TAG.summary
                 break
             fi
         fi
@@ -282,7 +320,7 @@ echo "=== soak $TAG 汇总 ==="
 echo "轮次: 累计 BEGIN=$BEG (滚动累加 $ACC_BEGIN + 当前窗口 $(cnt 'NETPROBE-BEGIN'))"
 echo "探针: ok=$OK refused=$REF timeout=$TO  curl: 200=$C2 000=$C0  异常=$PE"
 echo "dsusp_cum_ms=$SUSP  $( [ $SUSP -lt 1000 ] && echo VALID || echo INVALID )"
-echo "crash=$CRASH devreboot=$DEVRB recovered=$RECOVER"
+echo "crash=$CRASH devreboot=$DEVRB recovered=$RECOVER restarts=$NRESTART"
 echo "bin_md5=$BINMD5  boot_id=$BID0"
 echo "--- 三态判读（按 STATES.md）---"
 echo "refused=$REF 是「网络通」的阳性证据（RST 需完整栈）；timeout=$TO 才是可疑信号。"

@@ -119,20 +119,21 @@ def main():
     if len(st) < 10:
         print("  稳态样本不足（%d），跳过" % len(st))
     else:
-        for name, key in (("statm（soak 第3列）", "statm"),
-                          ("smaps（地面真值）", "smaps"),
-                          ("anon", "anon"),
-                          ("threads", "thr")):
-            pts = [(r["t"] / 3600.0, r[key] / 1024.0) for r in st if r[key] is not None]
+        # threads 是**个数**，不是 KB —— 一律除 1024 会把它印成 "0.0 MB"（试过）。
+        for name, key, div, unit in (("statm（soak 第3列）", "statm", 1024.0, "MB"),
+                                     ("smaps（地面真值）", "smaps", 1024.0, "MB"),
+                                     ("anon", "anon", 1024.0, "MB"),
+                                     ("threads", "thr", 1.0, "个")):
+            pts = [(r["t"] / 3600.0, r[key] / div) for r in st if r[key] is not None]
             res = slope(pts)
             if not res:
                 print("  %-18s 无数据" % name)
                 continue
             b, se, t = res
             vals = [y for _, y in pts]
-            print("  %-18s 均值 %7.1f MB  极差 %5.2f%%  斜率 %+6.2f MB/h (SE %.2f, t=%+.1f)"
-                  % (name, statistics.mean(vals),
-                     (max(vals) - min(vals)) / statistics.mean(vals) * 100, b, se, t))
+            print("  %-18s 均值 %7.1f %s  极差 %5.2f%%  斜率 %+7.2f %s/h (SE %.2f, t=%+.1f)"
+                  % (name, statistics.mean(vals), unit,
+                     (max(vals) - min(vals)) / statistics.mean(vals) * 100, b, unit, se, t))
         # gap = statm - smaps
         gpts = [(r["t"] / 3600.0, (r["statm"] - r["smaps"]) / 1024.0)
                 for r in st if r["smaps"] is not None]
