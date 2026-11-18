@@ -9363,3 +9363,91 @@ curl: (18) transfer closed with 513 bytes remaining to read
 | 我上一轮的 28% | ❌ 六个测量缺陷叠加的产物，**作废** |
 | 基准可复现性 | ✅ 加预热后原生侧波动 <0.1% |
 | 传输通道 | ✅ 串口 base64 + sha256，2.9s/4.6KB |
+
+## 13.70 启动时间的构成：四个多秒停顿占了 60%，但"慢 10 倍"是我猜的
+
+13.69 结尾我写"kernel 17.7 秒明显偏慢（原生通常 1~2 秒）"。
+**后半句是猜的，我没有原生对照。** 这一节把能测的都测了，把猜的部分标出来。
+
+### 一、17.7 秒花在哪：四个可定位的停顿
+
+按 dmesg 时间戳找相邻间隔 > 0.25s 的位置：
+
+| 时刻 | 间隔 | 那一行 |
+|---|---|---|
+| 4.079 | **+2.386s** | `Freeing initrd memory: 30980K` |
+| 10.721 | **+3.394s** | `ACPI: _SB_.L001: Enabled at IRQ 36`（此前静默，是 PCI/ACPI 探测） |
+| 13.903 | **+1.999s** | `EXT4-fs (vda1): mounted filesystem` |
+| 16.802 | **+2.900s** | `Not activating Mandatory Access Control`（此前静默） |
+
+合计 **10.7 秒 / 17.7 秒 ≈ 60%** 集中在这四处。其余是大量 0.25~0.6 秒的零散间隙
+（`Freeing unused kernel memory`、`Loaded X.509 cert`、`clk: Disabling unused clocks` 等）。
+
+`Freeing initrd memory: 30980K` 那一条尤其值得注意：30980K / 4K = 7745 页，
+**2.386 秒 → 每页 308 µs**。释放一页的正常代价是纳秒级。
+
+### 二、一个看起来很像元凶的代码，实测不是
+
+读 `dispatch.c:20` 的 deferred flush 实现，发现它在刷 TLB 时**把整个翻译缓存
+一起清掉了**：
+
+```c
+for (int i = 0; i < m->ncpus; i++)
+    if (m->cpus[i]) hv_tlb_flush(m->cpus[i]);
+...
+__atomic_add_fetch(&m->jit_gen, 1, __ATOMIC_SEQ_CST);
+for (int i = 0; i < m->ncpus; i++) {
+    if (m->cpus[i]) { hv_ijc_reset(...); hv_ret_clear(...); memset(m->percpu[i].jc, 0, ...); }
+}
+memset(m->hash, 0, sizeof m->hash);
+m->nblocks = 0;
+m->nslots = 0;
+hv_jit_reset(&m->jit);
+```
+
+**每次客机 TLB 失效 → 全部已翻译代码丢弃 → 从头重译。**
+而 `HV_K_TLBT` 这个开关只管 TLB 的**布局**（table-major vs slot-major），
+**没有"只刷范围、保留 JIT"的模式**（`machine.c:60`、`machine.h:432` 确认）。
+
+按这个逻辑，凡是大量改页表的负载（fork/exec、mmap/munmap、启动）都会被
+不成比例地拖慢。**于是做了一次决定性实测：50 次 fork+exec**
+
+| | 耗时 | 每次 |
+|---|---|---|
+| 原生（Android 上） | 1293 ms | 25.9 ms |
+| 客机（henge） | 1555 ms | 31.1 ms |
+| 比值 | **1.20×** | |
+
+**只有 1.20 倍。假设不成立** —— JIT 全量清空没有主导 fork/exec 这类负载。
+
+（注：两边每次 26~31 ms 对 `sh -c :` 来说都异常慢，说明这个循环本身被 shell
+启动开销主导，不太能反映纯 fork 成本。但**比值**仍说明客机没有额外一个数量级的
+惩罚。这个测法不够干净，结论只能定到"不是数量级差异"。）
+
+### 三、所以"启动慢"到底慢不慢：不知道
+
+我原来那句"原生通常 1~2 秒"是**没有依据的**。要把这件事说清楚需要：
+同一颗 SoC、同一个内核版本、同样的 initramfs，原生启动一次做对照。
+这个对照**没做**，所以：
+
+- ✅ 能确定：17.7 秒里有 10.7 秒是四个具体停顿
+- ✅ 能确定：释放 7745 页花了 2.386 秒，异常
+- ❌ **不能**说"比原生慢 10 倍"——没有原生基线
+
+### 四、下一步该怎么查（按可行性排）
+
+1. **`Freeing initrd memory` 的 308 µs/页**：这是最小、最可复现的单点。
+   在引擎里加计时，看是 `hv_tlb_flush`、`hv_jit_reset` 还是 buddy 分配器本身。
+2. **两处 3 秒静默**（ACPI/PCI 探测、`Not activating MAC` 之前）：
+   dmesg 没有输出，需要 `HV_LOG=3` 的 MMIO 记录来定位是哪个操作在等。
+3. **原生对照**：需要一次同内核的原生启动，才能给"慢多少倍"一个真数。
+
+### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 启动 17.7s 的构成 | ✅ 四个停顿占 10.7s（60%），已定位到具体行 |
+| `Freeing initrd` | ⚠ 308 µs/页，异常，最小可复现单点 |
+| "TLB 失效清空全 JIT" | ✅ 代码属实（`dispatch.c:20`） |
+| 它是否主导实际负载 | ❌ **实测 fork/exec 只慢 1.20×，不成立** |
+| "启动比原生慢 10 倍" | ❌ **我上一轮的猜测，无原生对照，撤回** |
