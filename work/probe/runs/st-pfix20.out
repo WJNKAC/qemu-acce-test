@@ -1,0 +1,344 @@
+=== seedtest tag=pfix20 smp=2 max_rounds=20 timeout=2400s ===
+（reset 由 guest 内 systemctl reboot 发起，host 只读 serial）
+--- round 1 (t=115s) ---
+  NETPROBE-BEGIN round=1 uptime=101.76
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+--- round 2 (t=200s) ---
+  NETPROBE-BEGIN round=2 uptime=60.56
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 3 (t=280s) ---
+  NETPROBE-BEGIN round=3 uptime=60.61
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+--- round 4 (t=360s) ---
+  NETPROBE-BEGIN round=4 uptime=60.51
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+--- round 5 (t=445s) ---
+  NETPROBE-BEGIN round=5 uptime=60.84
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 6 (t=525s) ---
+  NETPROBE-BEGIN round=6 uptime=60.63
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+--- round 7 (t=610s) ---
+  NETPROBE-BEGIN round=7 uptime=60.32
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 8 (t=690s) ---
+  NETPROBE-BEGIN round=8 uptime=61.19
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 9 (t=770s) ---
+  NETPROBE-BEGIN round=9 uptime=60.67
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+--- round 10 (t=855s) ---
+  NETPROBE-BEGIN round=10 uptime=60.20
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 11 (t=935s) ---
+  NETPROBE-BEGIN round=11 uptime=60.50
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 12 (t=1015s) ---
+  NETPROBE-BEGIN round=12 uptime=60.50
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+--- round 13 (t=1095s) ---
+  NETPROBE-BEGIN round=13 uptime=60.96
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+--- round 14 (t=1180s) ---
+  NETPROBE-BEGIN round=14 uptime=60.73
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 15 (t=1260s) ---
+  NETPROBE-BEGIN round=15 uptime=61.30
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+--- round 16 (t=1345s) ---
+  NETPROBE-BEGIN round=16 uptime=61.32
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+--- round 17 (t=1430s) ---
+  NETPROBE-BEGIN round=17 uptime=60.86
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 18 (t=1510s) ---
+  NETPROBE-BEGIN round=18 uptime=60.47
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+--- round 19 (t=1595s) ---
+  NETPROBE-BEGIN round=19 uptime=60.36
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+--- round 20 (t=1675s) ---
+  NETPROBE-BEGIN round=20 uptime=60.44
+  NETPROBE-KERNEL 6.1.0-54-cloud-arm64
+  NETPROBE-ADDR lo 127.0.0.1/8
+  NETPROBE-ADDR enp0s1 169.254.2.1/8
+  NETPROBE-ROUTE default via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 169.0.0.0/8 dev enp0s1 proto kernel scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 192.168.1.1 dev enp0s1 proto dhcp scope link src 169.254.2.1 metric 100 
+  NETPROBE-ROUTE 223.5.5.5 via 192.168.1.1 dev enp0s1 proto dhcp src 169.254.2.1 metric 100 
+  NETPROBE-GW gw=192.168.1.1
+  NETPROBE-DNS server=223.5.5.5
+  NETPROBE-TCP-GW22 state=refused
+  NETPROBE-TCP-EXT state=ok
+  NETPROBE-DNS-RESOLVE result=101.6.15.130
+  NETPROBE-CURL-GW code=000
+  NETPROBE-CURL-EXT code=404
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+  NETPROBE-LINK     RX errors:  length    crc   frame    fifo overrun
+  NETPROBE-LINK     TX:  bytes packets errors dropped carrier collsns           
+  NETPROBE-LINK     TX errors: aborted   fifo  window heartbt transns
+  NETPROBE-LINK     RX:  bytes packets errors dropped  missed   mcast           
+
+=== 汇总 (net=passt) ===
+轮次: BEGIN=20  END=20   ci-info=20   multi-user=20(参考)   seed=1
+TCP 网关: refused=20(路径通)  timeout=0
+TCP 外网: ok=20  timeout=0   (223.5.5.5:80，不依赖 DNS)
+DNS 解析: ok=20  fail=0 / 共20
+curl-GW(host监听): 200=0/20
+curl-EXT(公网IP): 非000=20 000=0 / 共20   分布:      20 404 （404 属正常：AliDNS 无 / 页面）
+任意 timeout 总数: 0   ← 唯一可疑信号
+探针异常: 0（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）
+dsusp_ms=1  verdict=VALID
+完整性: 每轮都有 END —— 无半途死
+passt: 地址=enp0s1 169.254.2.1/8  网关=192.168.1.1  （应分别为 169.254.x/8 与宿主真实网关）
+boot_id: 起始 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6   结束 79bc06e8-5882-4ba8-9bfd-1f5b803fd8d6
+★ per-instance 坑已绕过：第 20 轮仍在跑（cloud-init 模块早已失效）

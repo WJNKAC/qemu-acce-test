@@ -338,7 +338,14 @@ say "轮次: BEGIN=$BEG  END=$END   ci-info=$CI   multi-user=$MU(参考)   seed=
 say "TCP 网关: refused=$GW22REF(路径通)  timeout=$GW22BAD"
 say "TCP 外网: ok=$EXT_OK  timeout=$EXT_BAD   (223.5.5.5:80，不依赖 DNS)"
 say "DNS 解析: ok=$DNSOK  fail=$DNSFAIL / 共$DNSDONE"
-say "curl-GW(host监听): 200=$CGW200/$CGWN"
+# passt 下 10.0.2.2/网关是**真实路由器**，它不可能有我们的 10080 监听，
+# 所以这一列在 passt 下永远 0/20。照原样打出来会被读成"curl 全坏"。
+# 仪器读不出来的量，就不要摆成一个像结果的数。
+if [ "$NET" = passt ]; then
+    say "curl-GW(host监听): 不适用（passt 下 GW 是真实路由器，无 10080；见 13.53）"
+else
+    say "curl-GW(host监听): 200=$CGW200/$CGWN"
+fi
 say "curl-EXT(公网IP): 非000=$CEXTOK 000=$CEXT000 / 共$CEXTN   分布: ${CEXTCODES:-无}（404 属正常：AliDNS 无 / 页面）"
 say "任意 timeout 总数: $TIMEOUT_ALL   ← 唯一可疑信号"
 say "探针异常: $PERR（数的是 err:* 与 PROBE-ERR，不是 refused/timeout）"
