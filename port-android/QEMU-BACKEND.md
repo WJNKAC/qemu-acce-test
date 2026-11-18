@@ -8907,3 +8907,211 @@ virtio-gpu-pci 设备存在（QEMU 侧）
 
 **"装个桌面"和"能看见桌面"之间隔着一个内核选择。** 这条如果不实测，
 会一路以为是 Xorg 配置问题 —— 而 Xorg 那一侧全是对的。
+
+## 13.67 ★★★★★ Linux 图形界面跑起来了：换通用内核 + USB HID 输入
+
+这一节把 13.66 的三个悬案一次结清：**图形出来了、键盘能打、鼠标能点。**
+
+### 一、根因修复：换掉 `-cloud` 内核
+
+13.66 查明 `linux-image-6.1.0-54-cloud-arm64` **不含 virtio_gpu 模块**。
+装通用内核（`apt install linux-image-arm64`，装到 `6.1.0-54-arm64`，32.9 MB）：
+
+```
+$ ls /lib/modules/6.1.0-54-arm64/kernel/drivers/gpu/drm/virtio
+virtio-gpu.ko                    ← cloud 版里没有的就是这个文件
+```
+
+重启后内核换成 `6.1.0-54-arm64`，DRM 立刻起来：
+
+```
+[drm] pci: virtio-gpu-pci detected at 0000:00:03.0
+[drm] features: -virgl +edid -resource_blob -host_visible
+[drm] number of scanouts: 1
+[drm] Initialized virtio_gpu 0.1.0 0 for 0000:00:03.0 on minor 0
+[drm] fb0: virtio_gpudrmfb frame buffer device
+
+$ ls /dev/dri/
+card0  renderD128  by-path
+$ ls /dev/fb0
+crw-rw---- 1 root video 29, 0  /dev/fb0
+```
+
+**对比 13.66 的同一检查点**：之前是 `DRM-CARD=NO` / `无 fb0`，现在是
+`card0` + `renderD128` + `fb0` 三件齐全。这一条是整轮的分水岭。
+
+### 二、输入设备：必须用 USB HID，不能用 virtio
+
+13.66 记过 `-device virtio-keyboard-pci` 会让 QEMU **直接退出**。
+查 limbo 的配置找到了正解 —— 它给用户选的鼠标是：
+
+```java
+// ArchDefinitions.getMouseValues()
+arrList.add("ps2");
+arrList.add("usb-mouse");
+arrList.add("usb-tablet");
+```
+
+**全是 USB HID，没有一个是 virtio。** 按这个改：
+
+```
+-device qemu-xhci,id=xhci \
+-device usb-kbd,bus=xhci.0 \
+-device usb-tablet,bus=xhci.0
+```
+
+QEMU 不崩，客机内核立刻认出来：
+
+```
+N: Name="QEMU QEMU USB Keyboard"
+H: Handlers=sysrq kbd leds event1
+N: Name="QEMU QEMU USB Tablet"
+H: Handlers=mouse0 event2 js0
+
+/dev/input/: event0 event1 event2 mouse0 mice js0
+```
+
+Xorg 也认了：
+
+```
+(II) XINPUT: Adding extended input device "QEMU QEMU USB Keyboard" (type: KEYBOARD, id 7)
+(II) XINPUT: Adding extended input device "QEMU QEMU USB Tablet" (type: MOUSE, id 8)
+(II) event2 - QEMU QEMU USB Tablet: is tagged by udev as: Mouse
+```
+
+**`usb-tablet` 是绝对坐标设备**，这点对 VNC 很关键：`usb-mouse` 是相对位移，
+VNC 客户端和 Android 触摸屏只能给绝对坐标，用相对的就会漂。
+limbo 在 `SDL_limbomouse.c` 里也专门处理了这件事（见第五节）。
+
+### 三、★ 桌面真的画出来了
+
+```
+$ DISPLAY=:0 xsetroot -solid "#2b5a3a"   → ROOT-OK
+$ DISPLAY=:0 xterm -geometry 88x24+50+50 ... &
+$ DISPLAY=:0 openbox &
+$ DISPLAY=:0 xwininfo -root | grep -E "Width|Height"
+  Width: 1280
+  Height: 800
+```
+
+抓帧（1280×800，**250 种颜色**），xterm 里是：
+
+```
+VNC-DESKTOP-WORKS
+6.1.0-54-arm64
+by-path  card0  renderD128
+```
+
+见 `vnc-linux-desktop.png`。**这是 Linux 图形界面第一次在 henge 上跑起来。**
+openbox 还给出了带最小化/最大化/关闭按钮的标题栏
+（`vnc-two-windows.png`）。
+
+### 四、★ 键鼠输入端到端验证
+
+**键盘**：在交互式 xterm 里发 `sendkey h/e/n/g/e`，屏幕上出现
+
+```
+root@deb12:~# henge█
+```
+
+（`vnc-keyboard-input.ppm`）。链路是：
+`monitor sendkey` → `qemu_input_event_send()` → 遍历 `handlers` 链表
+→ `usb-kbd` → 客机 `event1` → Xorg libinput → xterm 回显。**全通。**
+
+**鼠标**：`mouse_move 400 200` + `mouse_button 1/0`，两个 xterm 的
+z-order 发生变化（被点的窗口提到前面，标题栏高亮）。**全通。**
+
+顺带把 13.66 那条"`sendkey` 无效"的解释补全了：`ui/input.c:359` 的
+`qemu_input_event_send()` 只做两件事——检查 `runstate`，然后进
+`replay_input_event()`；真正投递靠遍历 `handlers` 链表
+（`QTAILQ_FOREACH(s, &handlers, node)`）。**没有输入设备 = 链为空 = 事件被静默丢弃。**
+所以当时不是"sendkey 不工作"，是"没有收件人"。
+
+### 五、limbo 的输入实现（用户要求参考）
+
+limbo 的做法可以概括成三层，我们只用了后两层：
+
+#### 1. Java 侧：`MotionEvent` → 归一化
+
+`LimboSDLSurface.onTouchProcess()`（`LimboSDLSurface.java:87`）：
+
+```java
+int action = event.getActionMasked();
+mouseState.x = event.getX();
+mouseState.y = event.getY();
+processMouseMovement(action, event.getToolType(0), mouseState.x, mouseState.y);
+processMouseButton(event, action, mouseState.x, mouseState.y);
+```
+
+关键在 `processMouseMovement()` 的**相对/绝对分支**：
+
+```java
+if (sdlActivity.isRelativeMode(toolType)) {
+    nx = (x - mouseState.old_x);     // 触屏当触控板用 → 差分
+    ny = (y - mouseState.old_y);
+}
+sdlActivity.sendMouseEvent(0, MotionEvent.ACTION_MOVE, toolType, nx, ny);
+```
+
+`isRelativeMode(toolType)` 看的是**输入源类型**（手指=相对/触控板，鼠标=绝对）。
+这一层我们没有——VNC 客户端自己会发绝对坐标，所以不需要模拟手势。
+
+#### 2. JNI 侧：Android action → SDL 事件
+
+`SDL_limbomouse.c` 把 Android 的 `ACTION_*` 映射到 SDL：
+
+| Android action | 值 | SDL 调用 |
+|---|---|---|
+| `ACTION_DOWN` | 0 | `SDL_SendMouseButton(..., SDL_PRESSED, button)` |
+| `ACTION_UP` | 1 | `SDL_SendMouseButton(..., SDL_RELEASED, button)` |
+| `ACTION_MOVE` | 2 | `SDL_SendMouseMotion(win, 0, relative, x, y)` |
+| `ACTION_HOVER_MOVE` | 7 | 同上 |
+| `ACTION_SCROLL` | 8 | `SDL_SendMouseWheel(...)` |
+
+**它只用 SDL 的公开 API**，不碰 QEMU。所以 QEMU 那边收到的就是标准 SDL 事件。
+
+#### 3. 一个必须抄的坑：相对模式要"强制对齐"
+
+```c
+//XXX: If the guest input device is not usb-tablet (ps2/usb) QEMU overrides
+// to relative mode; in order to provide a workaround we force the mode.
+SDL_bool relativeMouseMode = relative ? SDL_TRUE : SDL_FALSE;
+if (SDL_GetRelativeMouseMode() != relativeMouseMode) {
+    SDL_SetRelativeMouseMode(relativeMouseMode);
+}
+```
+
+注释说得很直白：**客机用的不是 `usb-tablet` 时，QEMU 会自动切相对模式**，
+于是绝对坐标全乱。修法是每次事件都把 SDL 的模式强行拉回与事件一致。
+这解释了为什么 limbo 把 `usb-tablet` 标成"fixesMouse"。
+
+#### 4. 还有一层：出界保护
+
+```c
+// Java 侧算好边界，JNI 侧把坐标钳进去
+if (checkBounds) {
+    if (relative && mouse->x + x < x_min) x = x_min - mouse->x;
+    ...
+}
+```
+
+因为 `usb-tablet` 是绝对设备，坐标一超出屏幕，指针就"粘"在边上或丢失。
+limbo 用 `nativeMouseBounds(xmin,xmax,ymin,ymax)` 把可视区域传下来钳位。
+
+**对我们的结论**：VNC 天然发绝对坐标 + 我们自己控制 `usb-tablet` 的映射，
+所以第 3、4 层都不需要。真正要照抄的只有一条 ——
+**输入设备必须是 `usb-tablet`，不能用 `usb-mouse`/PS2。**
+
+### 六、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| `-cloud` 内核缺 virtio_gpu | ✅ 换 `linux-image-arm64` 解决，`card0`+`fb0` 出现 |
+| `-device virtio-keyboard-pci` | ❌ henge 直接退出；**用 USB HID** |
+| `usb-kbd` + `usb-tablet` + `qemu-xhci` | ✅ 三件套，客机与 Xorg 都认 |
+| X 起不来（v2 那次） | ✅ 是内核缺驱动，不是 Xorg 配置 |
+| `x11.service` 报 failed | ⚠ X 本体在跑，是 unit 的 `Conflicts=getty@tty1` 连带被杀 |
+| 桌面 | ✅ 1280×800、openbox 标题栏、两个 xterm |
+| 键盘端到端 | ✅ `sendkey` → `henge` 回显 |
+| 鼠标端到端 | ✅ `mouse_move`/`mouse_button` → 窗口 z-order 变化 |
+| `sendkey` 曾经无效 | ✅ 不是它坏了，是 `handlers` 链表为空 |
