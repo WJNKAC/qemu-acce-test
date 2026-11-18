@@ -30,15 +30,67 @@ Termux:  nitro  kvm  tcg
 
 这是**打包口径**上的根本差异，也是我们必须自己编的原因。
 
-### 3. 显示后端
+### 3. 显示后端：GTK 和 SDL 两边都没有
 
 ```
 Termux:  none  curses  spice-app  dbus
 我们:    none
 ```
 
-缺 `curses`（在终端里直接显示）、`spice-app`、`dbus`。
-**VNC 不在这个列表里** —— 它是 `-vnc` 参数提供的独立通道，两边都有且我们用得很好。
+**GTK 和 SDL 在 Termux 的 QEMU 里也没有。** 决定性证据是包名：
+
+```
+Package: qemu-system-aarch64-headless
+Description: ... machine emulator and virtualizer (headless)
+                                  ↑ 明确是 headless 构建
+```
+
+三重验证：
+
+```
+$ ./tqemu -display help
+none  curses  spice-app  dbus          ← 没有 gtk、没有 sdl
+
+$ ./tqemu -M none -display sdl
+tqemu: -display sdl: Parameter 'type' does not accept value 'sdl'
+
+$ readelf -d qemu-system-aarch64 | grep -icE "gtk|sdl"
+0                                       ← 没有任何 libgtk/libSDL 依赖
+```
+
+⚠ **一个陷阱**：`strings` 里能搜到 `SDL`（6 处）和 `gtk`（2 处），
+但那全部是 **QAPI 类型定义和帮助文本**：
+
+```
+visit_type_DisplaySDL(...)          ← schema 自动生成，与 backend 无关
+visit_type_DisplayGTK(...)
+"window-close is only valid for GTK and SDL, ignoring option"   ← 帮助文本
+```
+
+QAPI schema 无条件生成，不管 backend 有没有编。**搜字符串会被骗。**
+
+所以显示方面我们和 Termux 是**同一档**：都是 headless + VNC。
+我们少的只是 `curses`（终端里直接画）和 `spice-app`/`dbus`。
+
+**VNC 不在这个列表里** —— 它是 `-vnc` 参数提供的独立通道，两边都有且好用。
+（顺带：Termux 起 VNC 也会报一样的
+`could not find keymap file for language 'en-us'`，和我们 13.64 踩的坑相同。）
+
+### 3b. 对照组：Limbo 才有 SDL
+
+| | 显示方式 | 原因 |
+|---|---|---|
+| **Termux** | VNC + curses | headless 构建 |
+| **我们** | VNC | headless 构建 |
+| **Limbo** | **SDL2 直连 + VNC** | 把 SDL2 编进 APK 并给 QEMU 打 patch |
+
+Limbo 的 `android-qemu-config.mak` 里 `USE_SDL=true` → `--enable-sdl`，
+再配 `sdl2-2.0.8.patch`（改 `SDL_android.c` 走 `SurfaceView`）。
+**这是它"像个原生 App"的原因，也是它必须 fork QEMU 的原因。**
+
+我们要不要 SDL？现在不需要 —— VNC 已经能跑出完整桌面（13.67）。
+SDL 的收益是"少一层编码 + 延迟低"，代价是"必须改 QEMU 源码 + 绑死 Activity 生命周期"，
+与我们"解耦、VM 不活在 Activity 里"的方向相反。
 
 ### 4. 音频后端 ⚠️ 差距最大
 
@@ -77,7 +129,8 @@ Termux:  socket stream dgram hubport tap passt user l2tpv3 bridge vhost-user vho
 | qcow2/vmdk/vhdx/vdi/vpc/qed/luks/vvfat | 有 | 有 |
 | **ssh** | **有** | **无** ← 依赖 libssh |
 | **http** | **有** | **无** ← 依赖 libcurl |
-| rbd/iscsi/nfs/gluster | 无 | 无 |
+| rbd/iscsi/gluster | 无 | 无 |
+| nfs | **有**（`driver=nfs`） | **有**（`driver=nfs`） |
 
 `ssh`/`http` 块驱动让我们**挂不了远程镜像**（比如 `-drive file=ssh://...`）。
 
@@ -251,3 +304,54 @@ QEMU 本体、`accel/henge`、slirp、pixman、glib 家族、libfdt
 
 **核心判断：我们缺的东西绝大多数不是"引擎能力"，是"打包口径"。**
 除了音频需要写一点后端代码，其余都是 configure 开关或补一个库的事。
+
+---
+
+## 六、这次踩到的判据陷阱（值得单独记）
+
+对比"某个能力有没有"有三种方法，可靠性差得很远：
+
+| 方法 | 可靠性 | 例子 |
+|---|---|---|
+| `strings` 搜关键字 | ❌ **会被骗** | `SDL`/`gtk` 在 Termux 里各出现 6/2 次，全是 QAPI 类型名和帮助文本，backend 根本没编 |
+| `-xxx help` 的输出 | ⚠ 半可靠 | `-vnc help` 列出 `tls-creds`，但 `CONFIG_GNUTLS` 是 `#undef` —— 帮助文本是硬编码的 |
+| **实际用一次，看接受还是报错** | ✅ 可靠 | `-display sdl` → `Parameter 'type' does not accept value 'sdl'` |
+
+**规则：判断"有没有"，就让它真跑一次。**
+
+同理，块驱动要注意"format / protocol / driver"三者的区别：
+
+```
+format=nfs        → Unknown driver          （错：nfs 不是磁盘格式）
+file=nfs://...    → Unknown protocol 'nfs'   （protocol 层没注册）
+driver=nfs        → Invalid parameter type   （对：driver 存在，只是参数写错）
+```
+
+三种写法三种错，只有最后一种能证明驱动在。**我第一版就是测错了方法，
+把"两边都有 NFS"写成了"两边都无"。**已修正。
+
+## 七、三方显示路径对照（为什么 Limbo 必须 fork QEMU）
+
+```
+Limbo:
+  android-qemu-config.mak:  USE_SDL=true  →  configure --enable-sdl
+  patches/sdl2-2.0.8.patch: 改 SDL_android.c，走 SurfaceView
+  patches/qemu-5.1.0.patch: 改 ui/sdl2.c / ui/sdl2-2d.c 的渲染路径
+  compat/sdl-extensions/:   SDL_limbomouse.c / SDL_limboscreen.c（JNI 转发）
+```
+
+| | 显示 | 与 QEMU 的关系 | 代价 |
+|---|---|---|---|
+| **Termux** | VNC + curses | 不改 QEMU（headless 包） | 无 |
+| **我们** | VNC | 不改 QEMU（headless），只加 `accel/henge` | 无 |
+| **Limbo** | SDL2 直连 + VNC | **改 QEMU 源码**（ui/sdl2*.c + SDL2 本体） | 要长期维护 patch |
+
+**我们和 Termux 是同一档（headless + VNC）；Limbo 走的是另一条路。**
+
+要不要上 SDL？当前判断是**不要**：
+- 收益：少一层 RFB 编码、延迟略低
+- 代价：必须改 QEMU 源码；而且 SDL 的 Android 驱动**绑死 SurfaceView / Activity**，
+  与我们"VM 不活在 Activity 生命周期里"的方向直接冲突
+
+如果将来确实觉得 VNC 延迟不可接受，正确的做法是**写一个 QEMU 的
+`-display` 后端**（比如走 `ANativeWindow` 的独立进程），而不是接 SDL2。
