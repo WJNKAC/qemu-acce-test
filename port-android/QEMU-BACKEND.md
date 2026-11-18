@@ -8487,3 +8487,176 @@ curl-GW 200=4/4      ← 修复前 2/3
 | 判据可信度 | 修复前该判据有约 3% 的假失败率，不能当"网络坏了"的证据 |
 | 修复后 | ✅ `timeout 300` + 去 `sleep`，`200=4/4` |
 | smp=4 | ✅ 4 轮全绿（reboot 序列，非单次启动） |
+
+## 13.64 显示打通：VNC 后端 + virtio-gpu 在设备上跑出真实画面
+
+13.63 结尾我说"显示是零代码起步"。**这条被推翻了** —— 一夜之间变成"补齐标准依赖"。
+关键发现：QEMU 的显示后端**本来就编在源码里**，只是 configure 时没开。
+
+### 一、先纠正我自己的判断
+
+| 我上一轮说的 | 实际 |
+|---|---|
+| "宿主侧没有任何把帧送出去的出口" | ❌ `virtio-gpu-pci` / `ramfb` / `virtio-vga` **设备名都在二进制里** |
+| "`screendump` 不存在" | ❌ 它存在，只在 `CONFIG_VNC` 打开后才编进来 |
+| "-display 只有 none 和 dbus" | ⚠ 对，但那是**没开 pixman/VNC 时**的结果 |
+| "零代码起步，不给天数" | ❌ 实际花费：**补一个 pixman + 改配置 + 重编** |
+
+真正的阻塞只有一条：**`CONFIG_PIXMAN` 没开**，而 pixman 在 NDK sysroot 里没有。
+
+### 二、pixman 交叉编译（唯一的新依赖）
+
+```sh
+meson setup build-android --cross-file android-aarch64-cross.txt \
+      --prefix=/data/qemu-android/prefix -Ddefault_library=static
+ninja -C build-android
+```
+
+产物验证：
+
+```
+$ llvm-objdump -f build-android/pixman/libpixman-1.a
+architecture: aarch64
+  pixman-arma64-neon-asm-bilinear.S.o:  file format elf64-littleaarch64   ← NEON 汇编也在
+$ llvm-nm ... | grep -c " T pixman_"
+230
+```
+
+**装到哪很关键。** QEMU 的 configure 会把 `pkg_config_libdir` **固化**进
+`config-meson.cross`（13.x 记过这条坑）。所以 pixman 必须装进
+`/data/qemu-android/prefix/lib/pkgconfig`，靠环境变量指是没用的：
+
+```
+$ pkg-config --modversion pixman-1     # PKG_CONFIG_LIBDIR 指向那个目录
+0.44.2
+$ pkg-config --modversion glib-2.0
+2.74.6                                  ← 原有 glib 没被破坏
+```
+
+### 三、configure 参数（与主力 build 对齐 + 只多 VNC/PIXMAN）
+
+```
+--target-list=aarch64-softmmu --cross-prefix=/data/qemu-android/wrappers/aarch64-linux-android30-
+--enable-henge --enable-slirp --enable-vnc --enable-pixman --enable-fdt=internal
+--disable-werror --disable-docs --disable-guest-agent --disable-modules
+--disable-capstone --disable-malloc-trim --disable-attr --disable-keyring
+--disable-l2tpv3 --disable-plugins --disable-replication --disable-tpm
+--disable-vhost-crypto --disable-vhost-kernel --disable-vhost-vdpa --disable-virtfs
+-Ddefault_library=static
+```
+
+三个必须踩到的点：
+
+| 点 | 症状 | 解法 |
+|---|---|---|
+| `-Werror` | `hv_helper` 缺原型 → error | `--disable-werror`（主力 build 也是 `werror=False`） |
+| 9p/virtfs | `9p-marshal.h:62 expected ';'`（clang 对 `packed` 更严） | `--disable-virtfs`（主力 build 也是 `#undef CONFIG_VIRTFS`） |
+| slirp 动态库 | 设备上 `CANNOT LINK: libslirp.so.0 not found` | **`-Ddefault_library=static`**，不是 `--static`（后者让 slirp 的 `-shared` 与 `-pie` 冲突：`ld.lld: error: -shared and -pie may not be used together`） |
+
+结果：
+
+```
+$ llvm-readelf -d qemu-system-aarch64 | grep NEEDED
+  [libz.so] [libm.so] [libdl.so] [libc.so]      ← libslirp 没了，静态进来了
+```
+
+**全量编译 2 分 3 秒**（1972 个目标），产物 117 MB。
+
+### 四、设备上的验证（三层，逐层排除"看起来对"）
+
+**第 1 层：后端列表**
+
+```
+$ q-vnc -help | grep vnc
+-vnc <display>  shorthand for -display vnc=<display>
+```
+
+（注意 `-display help` 仍只列 `none` —— VNC 不是 `-display` 的独立后端名，
+它挂在 `-display vnc=` 上。**只看那一行会误判成"没编进来"**。）
+
+**第 2 层：真的在监听**
+
+```
+$ awk '$4=="0A"{print $2}' /proc/net/tcp /proc/net/tcp6 | grep :170C
+0100007F:170C          ← 127.0.0.1:5900，注意是 tcp4
+```
+
+踩到的坑：`-vnc 127.0.0.1:0` 起不来，报
+`could not find keymap file for language 'en-us'`。补 `pc-bios/keymaps/en-us`
+到 `-L` 目录下才起。
+
+**第 3 层：RFB 协议握手（不只看端口通）**
+
+```
+1) banner        = b'RFB 003.008\n'
+2) security types = [1]                 ← None 认证，免密
+3) SecurityResult = 0
+4) ServerInit    = 640x480, depth=0 bpp=255
+5) 桌面名         = QEMU
+```
+
+**第 4 层：抓帧看内容**（这一步才证明"出的是真画面"）
+
+UEFI 无盘启动，`screendump` 得到 1280×800 PPM：
+
+```
+非黑包围盒 = (240, 108, 813, 219)
+```
+
+裁出来是**完整的 UEFI Interactive Shell 文本**：
+
+```
+UEFI Interactive Shell v2.2
+EDK II
+UEFI v2.70 (EDK II, 0x00010000)
+map: No mapping found.
+Press ESC in 1 seconds to skip startup.nsh or any other key to continue.
+Shell>
+```
+
+连 `startup.nsh` 的**黄色高亮**都对（不是单色渲染）。字符渲染、调色板、
+分辨率全部正常。
+
+带 Debian 盘再抓一帧，画面中央是 UEFI 自己画的：
+
+```
+Display output is not active.
+```
+
+**这也正确**：Linux 接管 framebuffer 后不往上面写（Debian 走 serial console），
+UEFI 在交接时留了这句话。所以"图形设备活着、但客机没在上面作图"是**预期状态**，
+不是故障。
+
+### 五、现在的位置
+
+| 项 | 状态 |
+|---|---|
+| pixman 交叉编译 | ✅ 含 NEON 汇编，230 个符号 |
+| VNC 后端 | ✅ `CONFIG_VNC`，RFB 3.8 握手通过 |
+| virtio-gpu-pci | ✅ 设备在，UEFI 用它画出了完整文本界面 |
+| 帧内容 | ✅ 1280×800，字符/颜色/分辨率正确 |
+| 观感 | ⚠ 只有固件阶段；Linux 起来了仍是黑底 + 一行提示 |
+| Android 端看图 | ⏳ 需要 VNC 客户端（adb forward 已通，`tcp:5900`） |
+
+**离"看到 Linux 桌面"还差两件，都不是显示通路本身：**
+
+1. **客机得有图形输出**：装 `xorg`/`weston`，或者在 cmdline 里给
+   `console=tty0` 让内核日志上屏。这是客机侧的事，跟 henge 无关。
+2. **Android 端要能收**：`adb forward` 只能在调试时用；要独立使用需要一个
+   VNC 客户端 App（或把 limbo 的 SDL 前端接过来，见下）。
+
+### 六、limbo 到底能借到什么（用户克隆了它）
+
+查过 `limbo-android-lib/src/main/jni`：
+
+| limbo 的东西 | 对我们有用吗 |
+|---|---|
+| `patches/qemu-5.1.0.patch`（576 行） | ❌ 目标是 QEMU 5.1.0/2.9.1，我们是 11.1.3，API 全变了 |
+| `compat/sdl-extensions/SDL_limboscreen.c`（30 行） | ❌ 只是个 JNI 转发，真正的画面在 SDL2 的 Android video driver 里 |
+| SDL2 Android 驱动（`SDL_android.c` 补丁） | ⚠ 要 Java Activity + `SurfaceView`，我们是 adb shell 里的 native 可执行文件，形态不匹配 |
+| `patches/sdl2-2.0.8.patch` 的 AAudio 部分 | ⚠ 思路可借（`dlopen` libaaudio 避免硬依赖），但我们还没有音频需求 |
+| **它证明了"Android 上能跑 QEMU + 显示"这件事可行** | ✅ 这个信心有价值 |
+
+结论：**limbo 的直接代码基本用不上**（版本差 6 个大版本、形态不同），
+但它把"Android 上 QEMU 前端长什么样"讲清楚了。真要独立使用，
+最省的路是**装一个现成 VNC 客户端**，而不是接 SDL。
