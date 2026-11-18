@@ -9554,3 +9554,102 @@ Abort the installation
 
 **注意**：没有 `qemu-img` 时可以直接给一个 20 GB 的空 raw 文件
 （`dd if=/dev/zero` 很慢，用 `truncate -s 20G` 造稀疏文件即可）。
+
+## 13.72 ★ 修正 13.71 的归因：`mouse_move` 不是绝对坐标，我一直在用错
+
+13.71 我写"鼠标有 ~21px（约 1 行）系统偏移"。**那是错的。**
+真正的机制完全不同，而且是我自己误用 API。
+
+### 一、根因：`mouse_move` 传的是**相对位移**，不是坐标
+
+`ui/ui-hmp-cmds.c:32`：
+
+```c
+void hmp_mouse_move(Monitor *mon, const QDict *qdict)
+{
+    dx = strtol(dx_str, NULL, 0);
+    dy = strtol(dy_str, NULL, 0);
+    qemu_input_queue_rel(NULL, INPUT_AXIS_X, dx);   /* ← REL，相对增量 */
+    qemu_input_queue_rel(NULL, INPUT_AXIS_Y, dy);
+```
+
+而 `hmp-commands.hx` 里它的文档写的是
+`"Move the active mouse to the specified coordinates dx dy"` —— **这个描述有歧义**，
+`dx/dy` 是数学意义上的"增量"，不是"坐标"。
+
+所以我发 `mouse_move 200 209` 的真实效果是：**光标往右下各走 200/209 像素**。
+连作几次就累积到屏幕边缘，于是：
+
+- 无论我传什么值，选中的永远是**列表最后一项**
+- 传 `y=5` 和 `y=209` 结果完全一样（都被钳在底部）
+
+**这解释了 13.71 观察到的全部现象。所谓"21px 偏移"是累积效应的错觉。**
+
+### 二、修法：给 HMP 加一条真正的绝对坐标命令
+
+QEMU 的绝对坐标能力在 QMP 的 `input-send-event`（`INPUT_EVENT_KIND_ABS`），
+但**当前二进制没有编入这条命令**（`unknown command: 'input-send-event'`）。
+
+于是在 `ui/ui-hmp-cmds.c` 里加了 `hmp_mouse_abs()`：
+
+```c
+void hmp_mouse_abs(Monitor *mon, const QDict *qdict)
+{
+    QemuConsole *con = qemu_console_lookup_default();
+    int x = qdict_get_int(qdict, "x");
+    int y = qdict_get_int(qdict, "y");
+    int w = qemu_console_get_width(con, 0);
+    int h = qemu_console_get_height(con, 0);
+    /* 夹到 [0, w-1] / [0, h-1] */
+    qemu_input_queue_abs(con, INPUT_AXIS_X, x, 0, w - 1);
+    qemu_input_queue_abs(con, INPUT_AXIS_Y, y, 0, h - 1);
+    qemu_input_event_sync();
+}
+```
+
+关键设计点：
+
+- **坐标用屏幕像素**，内部按 `qemu_console_get_width/height` 缩放到 `0..0x7FFF`。
+  调用方不需要知道 QEMU 内部定标（`INPUT_EVENT_ABS_MAX`）。
+- 传 `min_in=0, max_in=w-1`，越界自动夹住，不报错。
+- 找不到 console / 尺寸为 0 时给明确错误，**不静默失败**。
+
+注册在 `hmp-commands.hx`，声明加进 `include/monitor/hmp.h`。
+补丁：`port-android/patches-mouse-abs.patch`（96 行）。
+
+### 三、验证：绝对定位精确生效
+
+```
+(qemu) help mouse_abs
+mouse_abs x y -- move the active mouse to absolute screen pixel coordinates
+
+(qemu) mouse_abs 100 100
+mouse_abs 100 100 (console 1280x800)          ← 正确识别分辨率
+
+(qemu) mouse_abs 200 195    + mouse_button 1/0
+→ 精确选中 y=175 的那一行（Bosnian），与预期完全一致
+```
+
+对比 `mouse_move` 的"点哪都到末尾"，**问题彻底解决**。
+
+### 四、还有一个未解决的问题：GTK 列表的键盘导航不可靠
+
+在做这些的过程中反复遇到：
+
+- `Tab` 能在控件间移动焦点，但**有时无法把焦点送回列表**
+- 焦点在列表上时，`↓` **有时不移动选中项**（多次实验，成功率不稳定）
+- `Home`/`PageDown` 表现也不一致
+
+这是 **GTK 在 Xorg 下的焦点策略**问题，不是 QEMU 的。
+用 `mouse_abs` 点一下目标行反而比键盘更可靠 —— 这是这次修 `mouse_abs` 的额外收益。
+
+### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 13.71 的"21px 偏移" | ❌ **错的**，是相对位移累积的错觉 |
+| `mouse_move` 语义 | ✅ 相对增量（`qemu_input_queue_rel`） |
+| HMP 绝对坐标 | ✅ **新增 `mouse_abs x y`，实测精确** |
+| `input-send-event` | ❌ 当前二进制未编入（HMP 层） |
+| GTK 列表键盘导航 | ⚠ 不可靠，`Tab`/`↓` 成功率不稳定 |
+| 推荐做法 | ✅ GUI 操作优先 `mouse_abs`，键盘作辅助 |

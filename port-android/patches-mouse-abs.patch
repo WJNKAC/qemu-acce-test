@@ -1,0 +1,96 @@
+diff --git a/hmp-commands.hx b/hmp-commands.hx
+index 7ae2468a3d..e5f83e3a9a 100644
+--- a/hmp-commands.hx
++++ b/hmp-commands.hx
+@@ -748,6 +748,22 @@ SRST
+   with optional scroll axis *dz*.
+ ERST
+ 
++    {
++        .name       = "mouse_abs",
++        .args_type  = "x:i,y:i",
++        .params     = "x y",
++        .help       = "move the active mouse to absolute screen pixel coordinates",
++        .cmd        = hmp_mouse_abs,
++    },
++
++SRST
++``mouse_abs`` *x* *y*
++  Move the active mouse to absolute pixel coordinates *x* *y* on the
++  current graphical console. Unlike ``mouse_move`` (which takes relative
++  deltas), this positions the pointer directly, which is what you want
++  when driving a GUI from a script.
++ERST
++
+     {
+         .name       = "mouse_button",
+         .args_type  = "button_state:i",
+diff --git a/include/monitor/hmp.h b/include/monitor/hmp.h
+index 9258a049bf..0568f3656b 100644
+--- a/include/monitor/hmp.h
++++ b/include/monitor/hmp.h
+@@ -106,6 +106,7 @@ void hmp_netdev_del(Monitor *mon, const QDict *qdict);
+ void hmp_getfd(Monitor *mon, const QDict *qdict);
+ void hmp_closefd(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_move(Monitor *mon, const QDict *qdict);
++void hmp_mouse_abs(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_button(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_set(Monitor *mon, const QDict *qdict);
+ void hmp_sendkey(Monitor *mon, const QDict *qdict);
+diff --git a/ui/ui-hmp-cmds.c b/ui/ui-hmp-cmds.c
+index 06f4030ce4..10f1ff599b 100644
+--- a/ui/ui-hmp-cmds.c
++++ b/ui/ui-hmp-cmds.c
+@@ -53,6 +53,52 @@ void hmp_mouse_move(Monitor *mon, const QDict *qdict)
+     qemu_input_event_sync();
+ }
+ 
++/*
++ * mouse_abs x y —— 把光标放到**绝对屏幕坐标** (x, y)。
++ *
++ * 为什么需要它：HMP 原有的 mouse_move 走的是 qemu_input_queue_rel()，
++ * 参数是**相对位移量**而非坐标（见 hmp_mouse_move 实现）。
++ * 用它去"点某个控件"必须自己累积偏移，而且一旦累计错了就无法纠正 ——
++ * 实测想点列表第 5 项，多发几次后光标永远停在末尾。
++ *
++ * 绝对坐标只有 QMP 的 input-send-event 能做，但 HMP 里没有对应命令
++ * （本二进制也未编入 input-send-event）。所以这里补一条。
++ *
++ * 坐标用**屏幕像素**，内部按当前 console 分辨率缩放到 0..0x7FFF，
++ * 这样调用方不需要知道 QEMU 内部的定标。
++ */
++void hmp_mouse_abs(Monitor *mon, const QDict *qdict)
++{
++    QemuConsole *con = qemu_console_lookup_default();
++    int x = qdict_get_int(qdict, "x");
++    int y = qdict_get_int(qdict, "y");
++    int w, h;
++
++    if (!con) {
++        monitor_printf(mon, "no graphical console\n");
++        return;
++    }
++
++    w = qemu_console_get_width(con, 0);
++    h = qemu_console_get_height(con, 0);
++    if (w <= 0 || h <= 0) {
++        monitor_printf(mon, "console has no size yet (%dx%d)\n", w, h);
++        return;
++    }
++
++    /* 夹到 [0, w-1] / [0, h-1]，越界不报错但也不越界送 */
++    if (x < 0) x = 0;
++    if (y < 0) y = 0;
++    if (x > w - 1) x = w - 1;
++    if (y > h - 1) y = h - 1;
++
++    qemu_input_queue_abs(con, INPUT_AXIS_X, x, 0, w - 1);
++    qemu_input_queue_abs(con, INPUT_AXIS_Y, y, 0, h - 1);
++    qemu_input_event_sync();
++
++    monitor_printf(mon, "mouse_abs %d %d (console %dx%d)\n", x, y, w, h);
++}
++
+ void hmp_mouse_button(Monitor *mon, const QDict *qdict)
+ {
+     /* HMP mouse_button bitmask: 1=L, 2=R, 4=M */
