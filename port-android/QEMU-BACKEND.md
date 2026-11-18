@@ -9451,3 +9451,106 @@ hv_jit_reset(&m->jit);
 | "TLB 失效清空全 JIT" | ✅ 代码属实（`dispatch.c:20`） |
 | 它是否主导实际负载 | ❌ **实测 fork/exec 只慢 1.20×，不成立** |
 | "启动比原生慢 10 倍" | ❌ **我上一轮的猜测，无原生对照，撤回** |
+
+## 13.71 ★ Debian 13 图形安装器在 henge 上跑起来了（推翻 13.65 的"没法自动化"）
+
+13.65 我写"a 的图形安装器需要人手动点，不适合自动化"，理由是 `sendkey` 对 GRUB 无效。
+**那个结论当时是对的，但现在不成立了** —— 因为那时**没有键盘设备**。
+13.67 加了 `-device qemu-xhci,usb-kbd,usb-tablet` 之后，键鼠在图形界面里全通。
+
+### 一、GRUB 菜单里的 sendkey：这次真的动了
+
+同一个 `-cdrom debian13.iso` 启动，UEFI → GRUB 2.12：
+
+```
+$ printf "sendkey down\r" | nc 127.0.0.1 4490      # 一次
+```
+
+抓帧对比（md5 不同），高亮从 `Install` 移到了 `*Graphical install`：
+
+```
+ Install
+*Graphical install        ← 高亮移过来了
+ Advanced options ...
+```
+
+回车后内核引导，进入图形安装器。
+
+### 二、★ 图形安装器完整可用
+
+| 步骤 | 画面证据 | 结果 |
+|---|---|---|
+| 启动画面 | `debian 13` 品牌渐变头 | ✅ 880 色，满屏 1280×800 |
+| 语言选择 | 列表含中文 `中文(简体)` / `中文(繁體)` | ✅ **CJK 字体正常，不方框** |
+| 语言确认 | （选了 Suomi 后页面变芬兰语） | ✅ **选择真的生效了** |
+| 安装器主菜单 | `Debian installer main menu` 11 项 | ✅ |
+| 键盘布局 | `Configure the keyboard`，`American English` 高亮 | ✅ |
+
+主菜单实际列出的项：
+
+```
+Choose language
+Access the installer using a Braille display
+Configure the speech synthesizer voice
+Configure the keyboard
+Detect and mount installation media
+Load installer components from installation media
+Change debconf priority
+Check the integrity of installation media
+Save debug logs
+Execute a shell
+Abort the installation
+```
+
+**这是 GTK 前端完整跑起来的样子，不是"勉强显示"。**
+
+### 三、键鼠实测结论
+
+**键盘：完全可靠。**
+- `↑`/`↓` 移动列表选择（在语言列表里精确落到 `Amharic` = 第 3 项）
+- `Enter` 确认、`Tab` 切换焦点、`Home` 回列表首
+- 在 GRUB 菜单、GTK 安装器两个层面都生效
+
+**鼠标：能动但不精确，有 1 行偏差。**
+- `mouse_move` / `mouse_button` 都能到达客机（点列表能改选中项）
+- **但点击的 y 坐标比视觉位置偏约 1 行（~21 px）**
+  实测：想点 `English`，实际选中了它下一行的 `Esperanto`；连试两次同样偏移
+- 这不是"不能用"，是"要用就得减 21px 校正"
+
+### 四、★ 一个待查的真问题：usb-tablet 的坐标映射
+
+`usb-tablet` 是绝对坐标设备，理论上 `mouse_move x y` 应该 1:1 落到屏幕像素。
+实测有稳定的 ~21px 下偏（约 1 个列表行高）。
+
+可能的来源，**都还没验证，不猜**：
+1. `mouse_move` 的坐标系原点/范围与 guest 实际分辨率不一致
+2. VNC 的 1280×800 与 guest fb 的 1280×800 之间有 statusbar 等差值
+3. GTK 列表控件的行命中区本身与绘制位置有偏移（那就不是 QEMU 的问题）
+
+**判断方法**：在已知坐标画一个十字（`xsetroot` 或 xterm 定位），
+点它，看落点偏多少。这需要客机侧配合，下一步再做。
+
+**当前实践建议：GUI 操作优先用键盘**。键盘零偏差，且 GRUB/安装器都支持。
+
+### 五、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| GRUB 里 `sendkey` | ✅ 有效（有 usb-kbd 之后） |
+| 图形安装器 | ✅ 完整跑起来，到主菜单 |
+| CJK 字体 | ✅ 正常显示中文 |
+| 键盘 | ✅ 精确可靠，推荐 |
+| 鼠标 | ⚠ 可用但 ~21px 系统性偏移，未定位根因 |
+| 13.65 的"不适合自动化" | ❌ **已推翻**：自动化可行，走键盘 |
+| 完整装到磁盘 | ⏳ 未做（本次没挂目标盘，只验流程） |
+
+### 六、下一步（把"能装"变成"装完能用"）
+
+要真装一台 Debian 13，需要：
+1. 造一个 20 GB qcow2 当目标盘（`qemu-img create`，设备上没有这个工具，
+   得在宿主造好再推，或用一个空 raw 文件）
+2. 在安装器里走到分区步骤，选"用整个磁盘"
+3. 装完从硬盘启动，验证 systemd + 图形
+
+**注意**：没有 `qemu-img` 时可以直接给一个 20 GB 的空 raw 文件
+（`dd if=/dev/zero` 很慢，用 `truncate -s 20G` 造稀疏文件即可）。
