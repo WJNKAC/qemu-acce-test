@@ -8430,3 +8430,60 @@ crash=0 devreboot=0 recovered=0 restarts=1
 | threads | ⚠ 一次阶跃后回落，不能当泄漏指标 |
 | 停顿恢复 | ✅ 两级全部执行；`RECOVERED by restart` 未验 |
 | UEFI 菜单停顿频率 | ⚠ 2 次运行里 1 次（3.3 h 处），样本不足以给频率 |
+
+## 13.63 假 `curl-GW 000` 的根因：宿主监听循环自己开了个 1 秒空窗
+
+13.x 一直把 `curl-GW` 当"宿主 10080 监听还在不在"的阳性判据。smp=4 首跑
+（3 轮）里出过一次 `200=2/3`，当时差点记成"smp=4 下偶发网络失败"。逐轮摊开看：
+
+| round | TCP-GW22 | TCP-EXT | DNS | **curl-GW** | curl-EXT |
+|---|---|---|---|---|---|
+| 1 | refused | ok | ok | **200** | 404 |
+| 2 | refused | ok | ok | **200** | 404 |
+| 3 | refused | ok | ok | **000** | **404** |
+
+第 3 轮 `TCP-EXT ok`（公网 TCP 通）、`curl-EXT 404`（HTTP 通），**网络明明正常**，
+只有打宿主 `10.0.2.2:10080` 的那条挂了。所以问题在宿主侧，不在客机、不在 henge。
+
+### 一、根因：监听循环的两个空窗
+
+```sh
+( while true; do
+    printf 'HTTP/1.0 200 OK\r\n...' | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
+    sleep 1
+  done ) &        # ← 问题在这里
+```
+
+两个空窗叠加：
+
+1. `timeout 30` 到点把 `nc` 杀掉，到下一次 `nc` 起来之间**没人 listen**；
+2. 再 `sleep 1`，又白等一秒。
+
+一个 30 s 周期里有约 1 s 是聋的 ≈ 3.3%。3 轮里撞到 1 次，与这个比例吻合
+（不算巧，算正常）。**判据本身在制造自己的假失败。**
+
+改：`timeout 300`（只为防挂死）+ 去掉 `sleep`，空窗缩到进程重起的毫秒级。
+
+### 二、验证（`smp4b`，smp=4，4 轮）
+
+```
+BEGIN=4  END=4
+TCP-GW22 refused=4   TCP-EXT ok=4   timeout=0
+DNS ok=4 fail=0      curl-EXT 404×4（非000=4, 000=0）
+curl-GW 200=4/4      ← 修复前 2/3
+任意 timeout 0       探针异常 0      dsusp VALID
+```
+
+`smp=4`、`Brought up 1 node, 4 CPUs`、`Total of 4 processors activated`，
+四轮全是 `200`。空窗这一项收口。
+
+同时把 **smp=4** 从"只验过一次能起来"推进到"4 轮 reboot 序列全绿"。
+
+### 三、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| 假 `curl-GW 000` | ❌ 不是网络/henge；是脚本监听循环的 1 s 空窗 |
+| 判据可信度 | 修复前该判据有约 3% 的假失败率，不能当"网络坏了"的证据 |
+| 修复后 | ✅ `timeout 300` + 去 `sleep`，`200=4/4` |
+| smp=4 | ✅ 4 轮全绿（reboot 序列，非单次启动） |

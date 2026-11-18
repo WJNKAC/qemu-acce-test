@@ -138,10 +138,15 @@ LPFILE=$H/soak-$TAG.listen.pid
 if awk 'NR>1 && $4=="0A" {print $2}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qi ":${LHEX}$"; then
     echo "!! 10080(0x$LHEX) 已被占用 —— 沿用现有监听者，curl-GW 读数不由本脚本担保"
 else
+        # ⚠ 这里有两个会制造"假 000"的空窗，13.63 实测过：
+        #   1) `timeout 30` 到点把 nc 杀掉，到重新起之间没人 listen；
+        #   2) 再 `sleep 1`，又白等一秒。
+        # smp=4 那次 3 轮里就撞到 1 次：curl-GW 000，但同一轮 TCP-EXT ok、
+        # curl-EXT 404 —— 网络明明通，是宿主监听在打盹。
+        # 所以：timeout 拉长到 300 s（只为防挂死），去掉 sleep，空窗缩到重起的毫秒级。
     ( while true; do
         printf 'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK' \
-          | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
-        sleep 1
+          | timeout 300 nc -l -p 10080 -q1 >/dev/null 2>&1
       done ) >/dev/null 2>&1 &
     LPID=$!
     echo "$LPID" > "$LPFILE"

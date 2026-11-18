@@ -103,10 +103,15 @@ case "$NET" in
         # `kill -9 $(cat pidfile)` 就是**自杀**，后面的 `rm -f $LPFILE`
         # 永远执行不到 —— 现场就是"端口放了，pidfile 还在"。
         # 这是第四次同类（前三次：清理循环自杀、"*abtest*" 匹配自身、pgrep -f 自匹配）。
+        # ⚠ 这里有两个会制造"假 000"的空窗，13.63 实测过：
+        #   1) `timeout 30` 到点把 nc 杀掉，到重新起之间没人 listen；
+        #   2) 再 `sleep 1`，又白等一秒。
+        # smp=4 那次 3 轮里就撞到 1 次：curl-GW 000，但同一轮 TCP-EXT ok、
+        # curl-EXT 404 —— 网络明明通，是宿主监听在打盹。
+        # 所以：timeout 拉长到 300 s（只为防挂死），去掉 sleep，空窗缩到重起的毫秒级。
         ( while true; do
             printf 'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK' \
-              | timeout 30 nc -l -p 10080 -q1 >/dev/null 2>&1
-            sleep 1
+              | timeout 300 nc -l -p 10080 -q1 >/dev/null 2>&1
           done ) >/dev/null 2>&1 &
         LPID=$!
         echo "$LPID" > "$LPFILE"
