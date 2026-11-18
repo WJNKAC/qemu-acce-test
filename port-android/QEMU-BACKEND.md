@@ -9115,3 +9115,109 @@ limbo 用 `nativeMouseBounds(xmin,xmax,ymin,ymax)` 把可视区域传下来钳�
 | 键盘端到端 | ✅ `sendkey` → `henge` 回显 |
 | 鼠标端到端 | ✅ `mouse_move`/`mouse_button` → 窗口 z-order 变化 |
 | `sendkey` 曾经无效 | ✅ 不是它坏了，是 `handlers` 链表为空 |
+
+## 13.68 修 `x11.service` 的 failed：ExecStartPost 里的控制进程永不退出
+
+13.67 结尾留了一个悬案：`ps` 里能看到 `/usr/lib/xorg/Xorg :0` 在跑，
+但 `systemctl is-active x11.service` 报 **failed**。当时我猜是 `Conflicts=getty@tty1`
+导致的。**猜错了。** 看 journal 就清楚了：
+
+```
+x11.service: Control process exited, code=killed, status=15/TERM
+x11.service: Failed with result 'signal'
+X[746]: (II) Server terminated successfully (0). Closing log file.
+```
+
+`X` 是**被 SIGTERM 杀掉之后**才正常退出的（`terminated successfully (0)`）。
+凶手是它自己那个 unit。
+
+### 一、根因：把"永不退出的进程"放进了 ExecStartPost
+
+13.67 的 unit 是这么写的：
+
+```ini
+[Service]
+ExecStart=/usr/bin/X :0 vt1 -keeptty -nolisten tcp -br
+ExecStartPost=/bin/sh -c 'sleep 2; exec su -s /bin/sh -c "DISPLAY=:0 ... exec openbox" root'
+```
+
+systemd 的规则：**`ExecStartPost` 也是"控制进程"，必须退出，单元才算启动完成**。
+而 `su ... exec openbox` 里 openbox 是常驻进程，**永远不会退出**。
+于是 systemd 等到超时，`SIGTERM` 掉它，整个 unit 判 `Failed with result 'signal'`，
+连带着 `X` 也被 unit 的生命周期一起收走。
+
+**这就是"进程在、状态说失败"的完整解释**：不是状态骗人，是单元的定义错了。
+
+### 二、改法：把生命周期拆开
+
+| unit | 类型 | 职责 |
+|---|---|---|
+| `x11.service` | `Type=simple` | 只管 X 服务器本身，`ExecStart=/usr/lib/xorg/Xorg ...` |
+| `x11-session.service` | `Type=simple` | 只管 openbox，`BindsTo=x11.service` |
+| `gui-autostart.service` | `Type=oneshot` | 起一个 demo xterm，**自己校验**是否成功 |
+
+关键点：
+
+- **`Type=simple` 不要求进程退出**，这才是常驻服务的正确类型；
+  `ExecStartPost` 里塞常驻进程是结构性错误。
+- `BindsTo=x11.service`：X 死了会话跟着结束，不留孤儿 openbox。
+- `Conflicts=getty@tty1.service`：两者都要 `tty1`，会让对方反复被杀。
+- `-novtswitch` 加进 X 的参数：禁止 X 切 VT，避免和其他 VT 抢。
+
+### 三、验证分两步（这是重点）
+
+混在一起测就分不清"单元定义错"还是"`enable` 没生效"。
+
+**第 1 步：本轮 `enable` + `start`，验单元定义**
+
+```
+V8-RESULT x11=active session=active autostart=active
+V8-XORG-PID=1  V8-XTERM=1
+```
+
+**第 2 步：`systemctl reboot`，之后什么都不做，验开机自启**
+
+```
+$ cat /proc/uptime
+162.75 193.72                      ← 全新一次启动
+$ systemctl is-active x11.service x11-session.service gui-autostart.service
+active active active
+$ pgrep -c Xorg; pgrep -c openbox; pgrep -c xterm
+1
+1
+1
+```
+
+抓帧（`gui-autostart-after-reboot.png`）：xterm 里是
+
+```
+henge GUI
+6.1.0-54-arm64
+by-path  card0  renderD128
+```
+
+带 openbox 标题栏。**我全程没有登录、没有敲任何命令。**
+
+### 四、这一节的账
+
+| 项 | 结论 |
+|---|---|
+| `failed` 的真因 | ✅ `ExecStartPost` 里的 openbox 永不退出 → 控制进程超时被 SIGTERM |
+| 13.67 的猜测（`Conflicts=getty@tty1`） | ❌ 那是次要因素，不是真因 |
+| 正确结构 | ✅ X 与会话拆两个 `Type=simple` 单元 + `BindsTo` |
+| 单元定义 | ✅ 三单元 `active active active` |
+| 开机自启 | ✅ `reboot` 后 `uptime=162s` 全新启动即自动进桌面 |
+| 是否需要手动干预 | ✅ 不需要，零命令 |
+
+### 五、现在的完整启动链
+
+```
+UEFI → GRUB → Linux 6.1.0-54-arm64（通用内核，带 virtio_gpu）
+  → systemd multi-user.target
+      ├─ x11.service          Xorg :0 on vt1（DRM: card0）
+      ├─ x11-session.service  openbox（BindsTo x11）
+      └─ gui-autostart.service  xterm（自校验）
+  → VNC 上可见可操作的桌面（1280×800，键鼠通）
+```
+
+用 `port-android/gui.sh start` 一条命令就能起这套配置。
