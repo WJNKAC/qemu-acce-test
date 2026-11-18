@@ -1,0 +1,30 @@
+diff --git a/include/qemu/osdep.h b/include/qemu/osdep.h
+index 1ec5b42230..8fe5d52257 100644
+--- a/include/qemu/osdep.h
++++ b/include/qemu/osdep.h
+@@ -125,6 +125,25 @@ QEMU_EXTERN_C int daemon(int, int);
+ #include <fcntl.h>
+ #include <getopt.h>
+ #include <sys/stat.h>
++
++/*
++ * bionic (Android) 的 <sys/stat.h> 把 st_atime_nsec/st_mtime_nsec/st_ctime_nsec
++ * 定义成 "st_atim.tv_nsec" 这类展开式（NDK sys/stat.h:123-125），
++ * 而 fsdev/9p-marshal.h 里的结构体成员就叫 st_atime_nsec。
++ * 于是成员声明被预处理成 "uint64_t st_atim.tv_nsec;" —— 语法错误。
++ *
++ * glibc 只定义 st_atimensec（没有下划线），所以上游在 glibc 上从不暴露这个问题。
++ * 这不是 clang 更严格，是纯粹的宏命名冲突。
++ *
++ * 只影响我们用不到的那套向后兼容别名；真要用 xattr 语义的地方走的是
++ * struct stat 的 st_atim 成员，不依赖这些宏。
++ */
++#if defined(__ANDROID__)
++#undef st_atime_nsec
++#undef st_mtime_nsec
++#undef st_ctime_nsec
++#endif
++
+ #include <sys/time.h>
+ #include <assert.h>
+ /* setjmp must be declared before system/os-win32.h
