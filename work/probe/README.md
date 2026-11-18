@@ -64,3 +64,18 @@ ECAM 枚举完全依赖它。第一次写 ECAM 探针时它读回 0，我以为�
 
 `collect` 不采信脚本的汇总 —— 它把 serial 拉回来**按判据重算**。
 汇总可能根本没跑到（管道断、被杀），而 serial 是 append-only 的。
+
+## `soakreport.py`：soak 的读数只从这一个工具出
+
+```sh
+python3 soakreport.py runs/soak-night2.tsv
+```
+
+它做四件手写 heredoc 容易做歪的事：
+
+1. **累计轮次**：`round` 列是窗口局部的，滚动后从 0 重数（night1 上从 131 掉到 66）。
+   工具按"回退前峰值 + 回退后增量"算真累计。
+2. **判据取全程最大值**，并单独提示 `timeout` 的分布（前段/分散/后段）。
+3. **RSS 给三个斜率**：`statm`、`smaps_rollup`、以及两者的 gap。
+   gap 涨而 smaps 平 = 计数器漂移，不是泄漏（13.59）。
+4. **兼容 12 列老 TSV**：同一把尺才好比前后两次。
