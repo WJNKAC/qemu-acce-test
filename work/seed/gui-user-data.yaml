@@ -38,6 +38,23 @@ write_files:
       cat /etc/apt/sources.list 2>/dev/null || true
       ls /etc/apt/sources.list.d/ 2>/dev/null || true
 
+      # 换成国内镜像。deb.debian.org 走 fastly CDN，实测 17.1 kB/s，
+      # 索引就要 23 分钟。镜像站几十 MB/s。
+      # 只改 sources.list.d/debian.sources（Debian 12 已用 deb822 格式）。
+      echo "--- 换源到 mirrors.bfsu.edu.cn ---"
+      if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+          sed -i 's|https\?://deb.debian.org/debian|https://mirrors.bfsu.edu.cn/debian|g' \
+              /etc/apt/sources.list.d/debian.sources
+          sed -i 's|https\?://security.debian.org/debian-security|https://mirrors.bfsu.edu.cn/debian-security|g' \
+              /etc/apt/sources.list.d/debian.sources
+          echo "=== 改后 ==="
+          cat /etc/apt/sources.list.d/debian.sources
+      fi
+      # mirror+file: 间接层指向 deb.debian.org，也要一起改
+      for f in /etc/apt/mirrors/*.list; do
+          [ -f "$f" ] && sed -i 's|deb.debian.org|mirrors.bfsu.edu.cn|g' "$f" && echo "改了 $f"
+      done
+
       echo "--- apt-get update ---"
       apt-get update 2>&1
       RC_UPD=$?

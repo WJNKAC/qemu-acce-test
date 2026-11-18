@@ -8790,3 +8790,120 @@ henge 不支持这个设备。`virtio-gpu` 能用、`virtio-keyboard` 不能，�
 **建议：b 走完（换源后约 10 分钟），a 用于"看图形安装器"这一个用途。**
 把 a 装成可用系统意味着所有 20 轮门禁、soak、DNS 基线作废重跑，
 这个代价不该为了"版本新一点"付。
+
+## 13.66 b 的真相：装完 xorg 也没有图形 —— `-cloud` 内核不带 virtio-gpu
+
+用户说"b 可以开始"。b 的定义是"在现有 Debian 12 上装最小图形栈"。
+**xorg 装成功了，但桌面起不来。根因不在 xorg，在内核。**
+
+### 一、xorg 这一层：全绿
+
+```
+GUI-APT-INSTALL-RC=0
+GUI-BIN /usr/bin/Xorg        present
+GUI-BIN /usr/bin/openbox     present
+GUI-BIN /usr/bin/xterm       present
+GUI-BIN /usr/bin/startx      present
+GUI-PKG openbox 3.6.1-10
+GUI-PKG xinit 1.4.0-1
+GUI-PKG xserver-xorg-core 2:21.1.7-3+deb12u13
+GUI-PKG xterm 379-1
+GUI-INSTALL-DONE 2026-11-18T05:51:19Z
+```
+
+`xserver-xorg-video-all` 也在，驱动目录里有 `modesetting_drv.so` / `fbdev_drv.so`
+/ `vesa_drv.so`。**该有的都有。**
+
+### 二、★ 但设备节点一个都没有
+
+重启后抓帧仍是 `Display output is not active.`。写了一份诊断 seed 把每一环都测出来：
+
+```
+--- 1) DRM / 显卡是否被驱动接住 ---
+ls: cannot access '/dev/dri/': No such file or directory
+DRM-CARD=NO
+--- 2) fbcon 是否存在 ---
+ls: cannot access '/dev/fb*': No such file or directory
+无 fb0
+--- 5) getty@tty1 状态 ---
+disabled
+inactive
+```
+
+**没有 `/dev/dri/card0`，没有 `/dev/fb0`。** Xorg 的 modesetting 驱动要前者，
+fbdev 要后者。两者都没有 —— 不是配置问题，是**内核没提供**。
+
+### 三、★ 根因：`-cloud-arm64` 内核裁掉了 GPU 驱动
+
+定向诊断（D2）打到串口：
+
+```
+--- 1) virtio_gpu 模块文件在不在 ---
+ls: cannot access '/lib/modules/6.1.0-54-cloud-arm64/kernel/drivers/gpu/drm/virtio/':
+    No such file or directory
+--- 2) 内核配置 ---
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y          ← fbcon 是编进去的
+--- 3) 尝试 modprobe ---
+modprobe: FATAL: Module virtio_gpu not found in directory /lib/modules/6.1.0-54-cloud-arm64
+modprobe rc=1
+```
+
+**`CONFIG_FB=y` 和 `CONFIG_FRAMEBUFFER_CONSOLE=y` 都开着，但没有 DRM 驱动。**
+fbcon 只是"渲染层"，它需要一个底层的 DRM/fb 设备来画；virtio-gpu 的驱动模块
+在 `-cloud-arm64` 这个内核包里**根本没打进去**。
+
+所以整条链是这样断的：
+
+```
+virtio-gpu-pci 设备存在（QEMU 侧）
+  → 内核没有 virtio_gpu.ko
+  → 没有 /dev/dri/card0
+  → 没有 /dev/fb0
+  → Xorg modesetting 无从下手、fbdev 也无从下手
+  → 屏幕停在 UEFI 留下的 "Display output is not active."
+```
+
+`lsmod` 里 `virtio_net` / `virtio_blk` / `virtio_pci` 全在 —— **只有 GPU 那一个被裁掉**。
+这不是巧合，是 cloud 变体的设计取向：云主机不需要显卡。
+
+**而这正好解释了 13.64 的疑惑**：UEFI 阶段能画，是因为固件自己驱动 virtio-gpu，
+走的不是 Linux 驱动栈。一交给 Linux，图形就断了。
+
+### 四、GUI seed 自己也有三个 bug（先修掉才能看到真相）
+
+| # | bug | 现象 | 修法 |
+|---|---|---|---|
+| 1 | 脚本 `echo` 继承 systemd-run 的 stdout（journal） | serial 里一个字都没有，看着像"脚本没跑" | `exec >> /dev/console 2>&1` |
+| 2 | 只检查 `apt-get update` 的 `$?` | 源全解析失败仍返回 **0**（只有 `W:`），脚本"检查通过"后去 install 才炸 | 查 `apt-cache policy xorg` 有没有 `Candidate:` |
+| 3 | 靠 `getty@tty1` 自动登录 + `.profile` 里 startx | `getty@tty1` 是 `disabled/inactive`，整条链第一步就断 | 改成 systemd `x11.service` 直接起 X，不依赖 shell 登录 |
+
+第 2 条是最值得记的：**`apt-get update` 的 rc=0 不代表成功**。
+判据要盯着"东西到底拿到了没有"，不是"命令返回了什么"。
+
+### 五、另一个坑：henge 不支持 `virtio-keyboard-pci`
+
+13.65 想用 `sendkey` 操作 GRUB 菜单，没反应。原因是这个配置里没有任何键盘设备，
+而 GRUB 读的是固件键盘队列，不是 QEMU 输入层。试着加键盘：
+
+```
+-device virtio-keyboard-pci -device virtio-tablet-pci
+→ QEMU 直接退出
+```
+
+**`virtio-gpu` 能用，`virtio-keyboard` 不能。** 这条边界单独记下：
+`-M virt` 上的输入设备支持不完整，所以 GRUB/安装器这类"要按键"的界面
+在这一版 henge 上没法自动化。
+
+### 六、修法与当前状态
+
+| 项 | 结论 |
+|---|---|
+| xorg / openbox / xterm / startx | ✅ 都已安装并可执行 |
+| `/dev/dri`、`/dev/fb0` | ❌ 不存在 —— 内核缺 virtio_gpu |
+| 根因 | ✅ `linux-image-6.1.0-54-cloud-arm64` **不带 GPU 驱动** |
+| 修法 | 装通用内核 `linux-image-arm64`（候选版 6.1.190-1） |
+| 装通用内核 | ⏳ 进行中（apt 已换 bfsu 源，正在下载 ~50 MB） |
+
+**"装个桌面"和"能看见桌面"之间隔着一个内核选择。** 这条如果不实测，
+会一路以为是 Xorg 配置问题 —— 而 Xorg 那一侧全是对的。

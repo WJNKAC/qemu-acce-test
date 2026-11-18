@@ -1,0 +1,85 @@
+#cloud-config
+#
+# GUI seed v2：从 v1 的"装完就以为好了"改成"装完还要证明桌面真的起来了"。
+#
+# v1 的结果：apt 全成功（GUI-INSTALL-DONE，四个二进制都 present），
+# 但重启后 VNC 上仍是 "Display output is not active." —— 说明
+# tty1 自动登录 + .profile 里 startx 这条链没跑起来。
+#
+# 为什么不继续猜：这条链有 4 个环节（getty@tty1 是否启用 / agetty 是否
+# 真的 autologin / login 是否读 .profile / startx 是否找到可用显卡），
+# 任一环断都表现为"黑屏"，靠改一处试一次的代价是每轮 4 分钟。
+# 所以这份 seed 一次把四环全测出来。
+#
+# 改成 systemd 单元直接起 X，不依赖 shell 登录链 —— 这是更确定的做法：
+#   x11.service  ExecStart=/usr/bin/startx -- /usr/bin/X :0 vt1
+# 并且把 Xorg 的日志路径也打到 console，起不来时能直接读原因。
+datasource_list: [NoCloud, None]
+
+write_files:
+  - path: /usr/local/bin/gui-diag.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      exec >> /dev/console 2>&1
+      echo "=== GUI-DIAG-BEGIN $(date -u +%FT%TZ) ==="
+
+      echo "--- 1) DRM / 显卡是否被驱动接住 ---"
+      ls -l /dev/dri/ 2>&1
+      dmesg 2>/dev/null | grep -iE "virtio_gpu|drm|fb0" | tail -8
+      echo "DRM-CARD=$( [ -e /dev/dri/card0 ] && echo yes || echo NO )"
+
+      echo "--- 2) fbcon 是否存在 ---"
+      ls -l /dev/fb* 2>&1
+      cat /sys/class/graphics/fb0/name 2>/dev/null || echo "无 fb0"
+
+      echo "--- 3) 已装的 X 相关包 ---"
+      dpkg-query -W -f='${Package} ${Version}\n' 2>/dev/null \
+        | grep -E "^(xserver-xorg|openbox|xterm|xinit)" | sort
+
+      echo "--- 4) Xorg 驱动目录（有没有 modesetting/fbdev）---"
+      ls /usr/lib/xorg/modules/drivers/ 2>&1
+
+      echo "--- 5) getty@tty1 状态（v1 依赖它，先看它在不在）---"
+      systemctl is-enabled getty@tty1.service 2>&1
+      systemctl is-active  getty@tty1.service 2>&1
+
+      echo "--- 6) 起一次 X，把结果留下 ---"
+      # 用 -noreset 避免 X 一退就重启；只跑一次，看它退出码和日志。
+      # 分辨率由 virtio-gpu 的 EDID 给（1280x800），不写死。
+      timeout 25 /usr/bin/startx -- /usr/bin/X :0 vt1 -nolisten tcp 2>&1 | tail -20
+      echo "X-TRY-RC=$?"
+
+      echo "--- 7) Xorg 日志尾部（起不来就看这里）---"
+      for f in /var/log/Xorg.0.log /root/.local/share/xorg/Xorg.0.log; do
+          [ -f "$f" ] && { echo "[[$f]]"; tail -25 "$f"; }
+      done
+
+      echo "=== GUI-DIAG-END ==="
+      sync
+
+  - path: /etc/systemd/system/x11.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=X11 on tty1 (openbox)
+      After=systemd-user-sessions.service
+      Conflicts=getty@tty1.service
+
+      [Service]
+      Type=simple
+      # -keeptty 让 X 留在 tty1 上；-br 黑底；-nolisten 不开放 TCP
+      ExecStart=/usr/bin/X :0 vt1 -keeptty -nolisten tcp -br
+      # X 起来后再拉 openbox + xterm。放在同一个 unit 里，日志统一。
+      ExecStartPost=/bin/sh -c 'sleep 2; exec su -s /bin/sh -c "DISPLAY=:0 xsetroot -solid #2b3a55; DISPLAY=:0 xterm -geometry 100x30+40+40 & DISPLAY=:0 exec openbox" root'
+      Restart=on-failure
+      RestartSec=3
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [ sh, -c, "systemctl disable getty@tty1.service 2>/dev/null; systemctl daemon-reload; systemctl enable x11.service >/dev/console 2>&1; systemctl start x11.service >/dev/console 2>&1" ]
+  - [ sh, -c, "systemd-run --unit=gui-diag --collect --property=Type=oneshot /usr/local/bin/gui-diag.sh >/dev/null 2>&1" ]
