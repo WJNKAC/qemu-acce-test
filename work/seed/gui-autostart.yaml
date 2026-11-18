@@ -1,0 +1,120 @@
+#cloud-config
+# v8：修正 x11.service —— 拆成"X 服务器"和"会话"两个单元。
+#
+# 13.67 的 x11.service 结构上就错了：
+#   ExecStartPost=/bin/sh -c 'sleep 2; exec su ... openbox'
+# 这个 su 永不退出，而 systemd 的**控制进程必须退出**，单元才算启动完成。
+# 超时后 systemd SIGTERM 掉它，于是：
+#   x11.service: Control process exited, code=killed, status=15/TERM
+#   x11.service: Failed with result 'signal'
+# X 本体其实还活着（当时 PID 621/746 都在），是整个 unit 被判 failed。
+#
+# 正确结构：
+#   x11.service          只管 X 服务器本身（Type=simple，ExecStart=X）
+#   x11-session.service  只管会话（openbox），After=x11.service
+# 两者的生命周期分开，谁都不去"等对方退出"。
+datasource_list: [NoCloud, None]
+
+write_files:
+  - path: /etc/systemd/system/x11.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=X.Org server on :0
+      # 不让 getty 占用同一个 VT；两个都要 tty1 会互相把对方踢掉
+      Conflicts=getty@tty1.service
+      After=systemd-user-sessions.service
+
+      [Service]
+      Type=simple
+      # -keeptty 保留当前 VT，-novtswitch 禁止切 VT，-br 黑底，
+      # -nolisten tcp 不开放 TCP（VNC 走自己的通道，不需要 X 的 TCP）
+      ExecStart=/usr/lib/xorg/Xorg :0 vt1 -keeptty -novtswitch -nolisten tcp -br
+      # X 自己会因为 VT 竞争偶发退出，重启一次通常就好
+      Restart=on-failure
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/x11-session.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Graphical session (openbox + xterm) on :0
+      # 必须等 X 起来；BindsTo 让 X 死了会话也跟着结束，不留孤儿
+      Requires=x11.service
+      After=x11.service
+      BindsTo=x11.service
+
+      [Service]
+      Type=simple
+      Environment=DISPLAY=:0
+      Environment=HOME=/root
+      # 用 sh -c 是为了先上底色，再 exec 成 openbox（不留中间进程）
+      ExecStart=/bin/sh -c 'xsetroot -solid "#2b5a3a" || true; exec openbox'
+      Restart=on-failure
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/gui-autostart.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # 会话起来后再铺一个 xterm，并且**确认它真的出来了**。
+      # 只 start 单元不校验，等于又回到"看起来起了"的老问题。
+      exec >> /dev/console 2>&1
+      i=0
+      while [ $i -lt 20 ]; do
+          if DISPLAY=:0 xdpyinfo >/dev/null 2>&1; then break; fi
+          sleep 1; i=$((i+1))
+      done
+      echo "GUI-AUTOSTART: xdpyinfo after ${i}s"
+      DISPLAY=:0 xterm -geometry 92x26+60+120 -bg '#0d1117' -fg '#e6edf3' \
+          -fa 'DejaVu Sans Mono' -fs 14 \
+          -e sh -c 'echo "henge GUI"; uname -r; ls /dev/dri; sleep 86400' &
+      sleep 2
+      echo "GUI-AUTOSTART-XTERM=$(ps -A -o ARGS 2>/dev/null | grep -c '[x]term')"
+      echo "GUI-AUTOSTART-DONE"
+
+  - path: /etc/systemd/system/gui-autostart.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Open a demo xterm once the session is up
+      After=x11-session.service
+      Requires=x11-session.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/gui-autostart.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/gui-enable.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # 先 enable 再 start：**这一轮验证"单元定义对不对"**，
+      # 下一轮（不换 seed 直接 reboot）才验证"开机自启"。
+      # 两个问题分开测，混在一起就分不清是定义错还是 enable 没生效。
+      exec >> /dev/console 2>&1
+      systemctl disable getty@tty1.service 2>/dev/null
+      systemctl daemon-reload
+      systemctl enable x11.service x11-session.service gui-autostart.service
+      echo "V8-UNITS-ENABLED"
+      systemctl start x11.service
+      sleep 6
+      systemctl start x11-session.service
+      sleep 4
+      systemctl start gui-autostart.service
+      sleep 6
+      echo "V8-RESULT x11=$(systemctl is-active x11.service) session=$(systemctl is-active x11-session.service) autostart=$(systemctl is-active gui-autostart.service)"
+      echo "V8-XORG-PID=$(pgrep -c Xorg || echo 0)  V8-XTERM=$(pgrep -c xterm || echo 0)"
+
+runcmd:
+  - [ /usr/local/bin/gui-enable.sh ]
