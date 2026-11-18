@@ -2054,7 +2054,15 @@ r4 那一轮慢 14 倍，是在同一镜像同一口令下的偶发；量级与 
 `virtio1-req.0/req.1` 的中断计数在两列上都有增长，说明 MSI-X 多队列在真实流量下
 继续工作，不只是前面 dd 那次。
 
-### 顺带发现（未修）
+### 顺带发现（13.54 已查明，结论要改）
+
+> **13.54 追注**：这一段当时的定性（"`systemd-resolved` 不吃下发的 DNS"、
+> "不是 IP 层问题而是 DNS 问题"）**不成立**。真正的原因在 libslirp：
+> Android 没有 `/etc/resolv.conf` → `get_dns_addr()` 恒失败 →
+> **发往虚拟 DNS 地址 `10.0.2.3` 的所有包（任何端口）都被 EPERM 打死**，
+> 所以那根本不是"DNS 解析被拒"，是那个地址不可达（TCP 给 ENETUNREACH、
+> UDP 给 timeout）。绕法也不需要 `disable resolved`，改 link DNS 即可（13.55
+> 更给了根因修复）。下文保留原样，作为当时的判断记录。
 
 `systemd-resolved` 不吃 slirp 下发的 DNS：`resolvectl dns` 设了 `10.0.2.3`、
 `/etc/resolv.conf` 也写了 `nameserver 10.0.2.3`，`getent hosts` 仍 NXDOMAIN，
