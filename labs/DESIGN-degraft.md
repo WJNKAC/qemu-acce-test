@@ -214,3 +214,26 @@ vtimer 同构：CVAL 影子 + fire 时刻 diff。
 
 以上三条未实现前，翻权威会以"parked 但线已高"的形态挂死——这是 census 重推的产物，
 不是猜测。
+
+## 模式契约表（翻权威的诊断方法：契约缺行，不是孤 defect）
+
+| 职责 | shadow 模式 | authority 模式 |
+|---|---|---|
+| tap 接收 | 开（镜像到影子 GIC） | 开（路由到 `g_auth_g`）——已修 row 1 |
+| level→pending latch | 影子 GIC 的 update | 引擎 GIC——row 2 头号嫌疑 |
+| hppi 重算触发 | ?（怀疑靠 settle 轮询搭车） | tap 后必须显式 kick |
+| 线→vCPU 交付 | QEMU GIC（真身） | 引擎 percpu 线 |
+| vCPU 唤醒 | kicker 桥 | 待定（row 5） |
+| QEMU GIC 角色 | 权威，状态有效 | 退场，状态失效 |
+| 仪器（settle/seqlock/in_flight） | 对 QEMU 比 | **对象已死，必须显式关** |
+| ITS | 观察（门铃镜像） | 引擎真交付 MSI（新面） |
+
+grep 结果（`henge_shadow_active` 消费者，2026-11-23）：
+
+- 仪器类：`dispatch.c` BB diff、`henge-cpu.c` settle/ICC/ITS 元组、`henge-accel-ops.c` 线钩 diff
+  ——权威模式下仍在跑，比较对象是 QEMU 的死状态 → 必须按模式显式关；
+- tap 类：`hw/intc/arm_gicv3{,_dist,_redist,_its}.c` ——权威模式必须开（row 1）；
+- 路由类：`henge_shadow_spi/ppi` 的 `g_auth_g` 分支。
+
+结论：一个布尔两个主人（`henge_shadow_active` 在权威模式下名不副实，`g_auth_g` 是第二旗标）
+→ 重构为三态 enum（OFF/SHADOW/AUTHORITY），tap/仪器/路由全部 switch on mode。
