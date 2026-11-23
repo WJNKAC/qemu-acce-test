@@ -237,3 +237,75 @@ grep 结果（`henge_shadow_active` 消费者，2026-11-23）：
 
 结论：一个布尔两个主人（`henge_shadow_active` 在权威模式下名不副实，`g_auth_g` 是第二旗标）
 → 重构为三态 enum（OFF/SHADOW/AUTHORITY），tap/仪器/路由全部 switch on mode。
+
+---
+
+## census 定稿（authority 落地后，2026-11-24）
+
+上一节（"翻权威前的 census 重推"）是**翻之前的推演**，三条门条件后来都落了：
+(1) 唤醒桥 = kicker 线程的 `cpu_interrupt`/`qemu_cpu_kick`（`henge-accel-ops.c`）；
+(2) MMIO 路由 = 引擎 MMIO 表先于 QEMU 地址空间（设备 MSI 走 tap 进引擎 ITS，见第 142 轮）；
+(3) census 条件 —— 本文就是它的定稿，取代影子期那句
+"check 与 wait 都在 BQL 内 ⇒ parked ⇒ 无 pending"。
+
+### 实际停车点（不是猜的）
+
+```
+system/cpus.c: qemu_process_cpu_events()
+    while (cpu_thread_is_idle(cpu))          // 持 BQL
+        qemu_cond_wait(cpu->halt_cond, &bql); // 释放 BQL 睡
+```
+
+`cpu_thread_is_idle()` 在 `!cs->halted` / `cpu_has_work()` 之后调用
+`henge_vcpu_thread_is_idle()`；authority 态下后者**只读引擎线**
+（`henge_auth_line(ci,0/1)`，原子读，不取 g->mu）。
+
+### 三条线源与它们各自的唤醒
+
+| 源 | 线程/锁 | 置线 → 唤醒 |
+|---|---|---|
+| 设备 IRQ（SPI/PPI tap） | 设备线程或主循环，**持 BQL** | `henge_auth_spi/ppi` → 引擎 GIC `hv_gicv3_update_body`（g->mu 内）→ wake hook |
+| vtimer（PPI27） | 主循环，持 BQL | `henge_auth_tap_ppi` → 同上 |
+| ITS 设备 MSI（LPI） | 设备线程持 BQL；或 vCPU 线程（客机写 MSI-X 表，无 BQL） | `henge_shadow_its_msi` → 权威 ITS → `lpi_pending` → `hv_gicv3_update_body`（g->mu 内）→ wake hook |
+| 客机 SGI（ICC_SGI1R 跨核） | **vCPU 线程，无 BQL** | 引擎 ICC → 目标 CPU 的线 → wake hook |
+
+wake hook = `henge_wake_bridge`：**只**在 `wake_mu` 内置 `p->wake_pending = 1` + signal
+引擎 cv，并置 kicker 标志；**不在 GIC 线程里直接 `qemu_cpu_kick`**（踩过段错误）。
+kicker（2.5 ms）在 BQL 内 `cpu_interrupt(HARD)` + `qemu_cpu_kick`。
+
+**协定的另一半（第 143 轮补）**：`qemu_cpu_kick()` 的 broadcast 也必须**在 BQL 内**发。
+睡眠者以 BQL 作 mutex 在 `qemu_cond_wait()` 上等，无锁 broadcast 会落在
+"检查 idle → 进入 wait" 的窗口里丢掉——CPU_ON 的次核桥就这样丢过：PSCI 返回成功、
+次核永不运行、客机 6 秒后报 `CPU1: failed to come online`（修前 2/6 次，修后 6/6 通过）。
+判据：所有 `qemu_cpu_kick` 调用点都必须持 BQL（或经 `cpu_interrupt` → `generic_handle_interrupt`
+这条自带 BQL 的路径）。
+
+### 不变量（新的表述）
+
+> 一个已 park 的 vCPU 不可能有"看不见的 pending"：
+> 它在 **BQL 内**读引擎线并进入 `cond_wait`；持 BQL 的写者被这一步串行化，
+> 不可能落在"读到 0"和"睡下"之间；不持 BQL 的写者（客机 SGI）和它的
+> wake 标志都由 kicker 在 BQL 内**按当前线**再判一次，
+> 所以最坏情况是**晚一个 kicker 周期（≤2.5 ms）才醒**，不是丢唤醒。
+
+推论：
+- 旧的"parked ⇒ 无 pending"依赖的是**写者与检查都在 BQL 下**；这条拓扑已经不成立
+  （SGI/ITS 可以在 vCPU 线程置线），所以 census 的正确陈述是上面那句
+  **"parked ⇒ 无看不见的 pending，且新置线在一个 kicker 周期内变成 kick"**；
+- 计数器判据：`auth-irq masked/taken`、`sgi_acc`、`ppi_taken` 与"唤醒原因"直方图
+  （`henge-wake`）必须对得上；丢唤醒会表现为 `parked 且 line=1` 持续 > 一个周期
+  ——这就是 A5 的墙要抓的形态。
+
+## 范围清单（authority 覆盖 vs 排除）
+
+| 面 | 状态 | 证据 |
+|---|---|---|
+| 客机：v3（`-kernel Image` + initramfs，含 `its=on`） | 覆盖 | g1 g2 g3 h-v3its：→ `/myinit` → Power down |
+| 客机：UEFI-INTx（edk2 + virtio-blk/net） | 覆盖 | a3-intx-auth → `gdm.service` |
+| 客机：UEFI-ITS（`its=on`，virtio-net-pci MSI） | 覆盖 | i1（gdm）、i3（898 个 auth door） |
+| GIC | GICv3 dist/redist/ICC + ITS/LPI | 同上；GICv2 在 accel 入口显式拒绝 |
+| 中断源 | 设备 SPI/PPI、vtimer PPI27、ITS 设备 MSI、跨核 SGI | `auth-funnel`：sgi_sent=1000 sgi_acc=301/699、ppi_taken=4778/1519 |
+| 唤醒 | 引擎 cv + kicker 桥（本文件上一节） | g2/g3 心跳 + 全通 |
+| PSCI | in-engine：VERSION/FEATURES/CPU_ON/CPU_OFF/AFFINITY/SYSTEM_OFF/RESET | `HV_PSCI_LOG`；SYSTEM_* → `HENGE_EXIT_HALT` → QEMU shutdown/reset |
+| SMP | 2 vCPU | sgi_acc 双侧、CPU1 用户态 |
+| **排除** | GICv2（拒绝）；migration/savevm；EL2/EL3 客机（引擎只有 EL0/EL1）；`-smp 4` 未测；RT 镜像环境里没有 | 代码拒绝 + STATE 第 2050 行 |
