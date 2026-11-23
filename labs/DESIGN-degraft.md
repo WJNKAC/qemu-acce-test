@@ -309,3 +309,45 @@ kicker（2.5 ms）在 BQL 内 `cpu_interrupt(HARD)` + `qemu_cpu_kick`。
 | PSCI | in-engine：VERSION/FEATURES/CPU_ON/CPU_OFF/AFFINITY/SYSTEM_OFF/RESET | `HV_PSCI_LOG`；SYSTEM_* → `HENGE_EXIT_HALT` → QEMU shutdown/reset |
 | SMP | 2 vCPU | sgi_acc 双侧、CPU1 用户态 |
 | **排除** | GICv2（拒绝）；migration/savevm；EL2/EL3 客机（引擎只有 EL0/EL1）；`-smp 4` 未测；RT 镜像环境里没有 | 代码拒绝 + STATE 第 2050 行 |
+
+---
+
+## Phase B：语料回放 + 影子作为常驻诊断（2026-11-24 落地）
+
+### 语料（`labs/recon/corpus.sh`，手机侧，给 pass/fail 与退出码）
+
+| 病人 | 判据 |
+|---|---|
+| `v3-auth-smp1`（authority + `-kernel Image` + initramfs） | exit 0（`/myinit` 跑到 Power down）、无 panic |
+| `v3-auth-smp2` | `Booted secondary` + `Brought up 1 node, 2 CPUs`、无 panic |
+| `v3-off-smp1`（非权威基线） | exit 0、`/myinit` |
+| `v3-shadow-smp1`（影子诊断） | exit 0、engine online、`mismatch=0`、无 bad/unexplained |
+| `uefi-intx-auth`（edk2 + Debian 根盘，its=off） | `gdm.service` 启动、无 panic |
+| `uefi-its-auth`（同上，its=on，设备 MSI/LPI） | `gdm.service` 启动、无 panic |
+
+用法：`./scripts/corpus.sh [-q]`；`-q` = UEFI 窗口 100 s，默认 120 s
+（time-to-GDM 实测 69–83 s，超时没有余量会把"慢"判成"挂"——第一次回放就是这样
+把 uefi-intx-auth 判失败的：串口停在 24 s 的 ModemManager，不是挂）。
+
+退出码 = 失败检查数。最后一次：**FAILURES: 0**（见 STATE 第一百四十六轮）。
+
+### 影子作为常驻诊断（不是过渡代码）
+
+影子模式（`HENGE_GIC_SHADOW=1`，三态里的 SHADOW）保留为**唯一能对着活的 QEMU GIC
+做行级 diff 的仪器**：镜像设备线事件、GICD/GICR MMIO 与 ICC 访问，引擎独立算线，
+在块边界/exit 点比较。它只在 OFF 态初始化；authority 下 `henge_gic_instr_active()`
+为假，仪器整体关闭（否则就是和死状态比）。
+
+一次典型回放的读数（v3，smp1，20 s）：
+
+```
+henge-shadow: n_diffs=176128 mismatch=0 (bb=0 exit=0 race=281) settle n=32249 bad=0
+henge-shadow-xfer: tx irq=18875/17566 dist=378 redist=22 icc=0  rx 同上
+henge-shadow-pcpu: cpu0 settle=32249/0 bb=153786/0 edge=22349/0 window=3164 unexplained=0
+```
+
+读法：
+- `mismatch` 必须是 0（硬判据）；`bad`（settle 点坏）与 `unexplained` 必须是 0；
+- `race=281` 是独立桶（镜像写与 QEMU 线写之间的极窄交错），不是 mismatch，报告但不判失败；
+- `tx==rx` 是镜像账（事件数相等），说明 tap 没有丢事件；
+- 语料里的 `v3-shadow-smp1` 把这三条都写成 PASS 判据，所以影子不会被"顺手删掉"。
