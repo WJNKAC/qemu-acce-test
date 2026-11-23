@@ -1,0 +1,87 @@
+henge: del#64 defer=1 del_hit=5 del_miss=58 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#128 defer=1 del_hit=5 del_miss=122 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#192 defer=1 del_hit=5 del_miss=186 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=1
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=2
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=4
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=8
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=16
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=32
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=64
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=128
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=256
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=512
+henge: del#256 defer=1 del_hit=5 del_miss=250 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+hv-wfi: cpu0 A(line-high)=1024 B(no-tick)=0 slept=950
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+hv-wfi: cpu0 A(line-high)=2048 B(no-tick)=0 slept=950
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+hv-wfi: cpu0 A(line-high)=4096 B(no-tick)=0 slept=950
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+henge: wfi spin bailout cpu0 pc=ffff800080f3bec8 daif=c0 irq=1 fiq=0 el=1
+hv-wfi: cpu0 A(line-high)=8192 B(no-tick)=0 slept=950
+hv-wfi: cpu0 A(line-high)=16384 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=0 B(no-tick)=0 slept=1
+hv-wfi: cpu1 A(line-high)=0 B(no-tick)=0 slept=2
+hv-wfi: cpu1 A(line-high)=4 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=8 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=16 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=32 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=64 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=32768 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=128 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=256 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=512 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=1024 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=2048 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=65536 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=4096 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=8192 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=131072 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=16384 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=262144 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=32768 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=65536 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=524288 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=131072 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=262144 B(no-tick)=0 slept=3
+hv-wfi: cpu1 A(line-high)=524288 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=1048576 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=1048576 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=2097152 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=2097152 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=4194304 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=4194304 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=8388608 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=8388608 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=16777216 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=16777216 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=33554432 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=33554432 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=67108864 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=67108864 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=134217728 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=134217728 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=268435456 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=268435456 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=536870912 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=536870912 B(no-tick)=0 slept=3
+hv-wfi: cpu0 A(line-high)=1073741824 B(no-tick)=0 slept=950
+hv-wfi: cpu1 A(line-high)=1073741824 B(no-tick)=0 slept=3
+Killed 

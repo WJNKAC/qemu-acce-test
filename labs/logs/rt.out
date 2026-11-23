@@ -1,0 +1,5 @@
+henge: del#64 defer=1 del_hit=5 del_miss=58 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#128 defer=1 del_hit=5 del_miss=122 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#192 defer=1 del_hit=5 del_miss=186 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#256 defer=1 del_hit=5 del_miss=250 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+Killed 

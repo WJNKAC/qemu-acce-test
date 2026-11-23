@@ -1,0 +1,114 @@
+henge: del#64 defer=1 del_hit=4 del_miss=59 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#128 defer=1 del_hit=5 del_miss=122 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#192 defer=1 del_hit=5 del_miss=186 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=1
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=2
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=4
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=8
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=16
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=32
+hv-wfi: cpu0 A(line-high)=0 B(no-tick)=0 slept=64
+hv-wfi: cpu0 A(line-high)=1 B(no-tick)=0 slept=128
+hv-wfi: cpu0 A(line-high)=1 B(no-tick)=0 slept=256
+hv-wfi: cpu0 A(line-high)=2 B(no-tick)=0 slept=512
+henge: del#256 defer=1 del_hit=5 del_miss=250 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=0
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=2
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=4
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=8
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=16
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=32
+hv-wfi: cpu1 A(line-high)=1 B(no-tick)=0 slept=64
+hv-wfi: cpu0 A(line-high)=6 B(no-tick)=0 slept=1024
+henge: del#320 defer=1 del_hit=5 del_miss=314 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+henge: del#384 defer=1 del_hit=5 del_miss=378 ram_reuse=4 retired_hit=0 epoch_stale=0 hw=0 nram=3
+hv-wfi: cpu1 A(line-high)=3 B(no-tick)=0 slept=128
+hv-wfi: cpu1 A(line-high)=7 B(no-tick)=0 slept=256
+hv-wfi: cpu1 A(line-high)=9 B(no-tick)=0 slept=512
+hv-wfi: cpu0 A(line-high)=18 B(no-tick)=0 slept=2048
+hv-wfi: cpu1 A(line-high)=15 B(no-tick)=0 slept=1024
+hv-wfi: cpu1 A(line-high)=34 B(no-tick)=0 slept=2048
+hv-wfi: cpu0 A(line-high)=42 B(no-tick)=0 slept=4096
+hv-wfi: cpu1 A(line-high)=44 B(no-tick)=0 slept=4096
+hv-wfi: cpu0 A(line-high)=67 B(no-tick)=0 slept=8192
+hv-wfi: cpu1 A(line-high)=65 B(no-tick)=0 slept=8192
+hv-wfi: cpu0 A(line-high)=120 B(no-tick)=0 slept=16384
+hv-wfi: cpu1 A(line-high)=117 B(no-tick)=0 slept=16384
+hv-wfi: cpu0 A(line-high)=285 B(no-tick)=0 slept=32768
+hv-wfi: cpu1 A(line-high)=321 B(no-tick)=0 slept=32768
+hv-wfi: cpu0 A(line-high)=65536 B(no-tick)=0 slept=38158
+hv-wfi: cpu0 A(line-high)=131072 B(no-tick)=0 slept=38158
+hv-wfi: cpu0 A(line-high)=262144 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=65536 B(no-tick)=0 slept=35612
+hv-wfi: cpu1 A(line-high)=131072 B(no-tick)=0 slept=35612
+hv-wfi: cpu1 A(line-high)=262144 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=524288 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=524288 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=1048576 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=1048576 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=2097152 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=2097152 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=4194304 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=4194304 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=8388608 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=8388608 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=16777216 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=16777216 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=33554432 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=33554432 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=67108864 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=67108864 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=134217728 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=134217728 B(no-tick)=0 slept=35612
+hv-wfi: cpu1 A(line-high)=268435456 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=268435456 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=536870912 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=536870912 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=1073741824 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=1073741824 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=2147483648 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=2147483648 B(no-tick)=0 slept=38158
+hv-wfi: cpu1 A(line-high)=4294967296 B(no-tick)=0 slept=35612
+hv-wfi: cpu0 A(line-high)=4294967296 B(no-tick)=0 slept=38158
+stats  3600s: blocks 2.74M/s, translated 1517/s (again: va 19% va+pa 19%; 0% of time, 4.9 insns, 15.7x), slow mem 0K/s, mrs 10K/s msr 0K/s sys 0K/s, exc 199/s irq 23/s, tlb flush 24/s, fetch walks 0K/s, wfi 20/s (6% idle), flushes 0/s (smc 0 ic 0 full 0), blocks held 10765 (4 MB, 6 full flushes), chained 1555/s ijc fills 2705K/s resets 12/s, el1 pc ffff800080f3bec8
+  cache drops/s: full 0, ASID 4, user VA 0, kernel VA 1, code 0 (whole user half 3, filter full 0, big user range 0)
+  block hash: 10737 buckets used, 0 stale blocks, max chain 2, mean walk 1.0
+    worst: va ffff848b5cc8 pa b5394cc8 flags 0 gen 0/0
+    worst: va ffff800080ef56c0 pa b3af56c0 flags 5 gen 1/1
+  code words: inline 32% out of line 57% literals 11%
+  new code pages 1/s; waits: tlbi acks 4/s 0.0%, device lock 0/s 0.0%, translation lock 12/s 0.0% (of one CPU)
+  light lookups failed/s: odd 34125, filters full 0, no mapping 18, no block yet 111; walked 1K/s
+  big user-range TLBIs/s: 2 TLB only in the range, 0 with no cached targets to drop; big kernel ranges 0
+  TLBIs left to other CPUs/s: raced 2, every address space's cached targets 0, big range 0, ASID or all 2
+  remote drop races/s: walking 7, filling 3, during 4
+  inline words per insn 4.80: copy 40%x1.1 pcrel 4%x1.0 branch 18%x4.4 branch-reg 3%x11.3 memory 33%x9.7 pac 3%x1.0
+  user light fills: shared region 0K/s, elsewhere 0K/s
+  code-page protects/s: none 1, one entry 1, whole-TLB scans 0
+  slots: ram_reuse 4, retired_hit 0, epoch_stale 0, epoch_high_water 0
+  fast resume refused/s: state 0, exit request 0, interrupt 1, timer 13, not cached 37
+  WFE waits in place 6/s; exits chained as placed 173/s; SVC/ERET resumed in place 352/s
+  exit requests/s: TLBI posts 5, wakes 22 (of them device work 0), kick all 0, own 0
+  light refills 2K/s, light branch-cache fills 2K/s, chained to other pages 224/s
+  process switches: 3/s saved, 2/s restored (121 entries each)
+  tlb misses K/s: el0 empty 0 el0 conflict 0 el1 empty 0 el1 conflict 0
+  slow mem causes K/s: mmio 0 code-page write 0 page end 0 tlb miss 0 other 0 entry-but-tag 0
+  slow mem K/s: single 0 pair 0 literal 0 ldra 0 ordered 0 excl 0 cas 0 casp 0 atomic 0 vec 0/0
+  ijc fills into: empty 0K/s, live other salt 0K/s, dead salt 1K/s, same salt 2702K/s
+  light fills into: empty 0K/s, live other salt 0K/s, dead salt 2K/s, same salt 0K/s
+  misses at: RET 0K/s, BR/BLR 34K/s, B/BL 0K/s, conditional 0K/s, MSR 0K/s, other 0K/s, unknown 0K/s
+  entries 2.74M/s: chain fill 0%, kick 0%, exception/sysreg 98%, interrupt 0%, cached target 0%, cache miss 1%
+   S3_3_C14_C0_2: 8306 reads 0 writes/sys per s
+   S3_0_C2_C0_2: 1918 reads 0 writes/sys per s
+   S3_3_C14_C3_1: 35 reads 34 writes/sys per s
+   S1_3_C7_C4_1: 0 reads 68 writes/sys per s
+   S1_0_C8_C3_5: 0 reads 41 writes/sys per s
+   S1_0_C8_C3_7: 0 reads 32 writes/sys per s
+   S3_3_C0_C0_1: 32 reads 0 writes/sys per s
+   S3_0_C12_C12_1: 0 reads 23 writes/sys per s
+   S3_0_C12_C12_0: 23 reads 0 writes/sys per s
+   S3_3_C14_C3_2: 2 reads 19 writes/sys per s
+   S3_0_C0_C6_0: 14 reads 0 writes/sys per s
+   S1_0_C8_C7_3: 0 reads 9 writes/sys per s
+   S3_3_C14_C0_0: 9 reads 0 writes/sys per s
+   S3_0_C2_C0_0: 0 reads 8 writes/sys per s
+Killed 
