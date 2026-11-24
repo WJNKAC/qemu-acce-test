@@ -28,7 +28,7 @@ cd /work/probe
 for p in probe sysreg idreg timer timerirq smp smc; do
     aarch64-linux-gnu-gcc -nostdlib -nostartfiles -T probe.ld -o $p.elf $p.S 2>/dev/null
 done
-cd /src/qemu-mainline
+cd /src/qemu-henge
 export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 Q=./build/qemu-system-aarch64
 V="-M virt -cpu cortex-a57 -m 256 -nographic"

@@ -1,7 +1,7 @@
 #!/bin/sh
 # 交叉编译 QEMU（aarch64 产物）
 set -e
-cd /src/qemu-mainline
+cd /src/qemu-henge
 export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 

@@ -7,8 +7,8 @@
 #   可 rebase（换 qemu 版本时 git apply --3way）、可计数（改了多少行是硬数字）。
 #
 # 两个补丁目标（13.54 起）：
-#   0001-henge-port.patch       -> src/qemu-mainline                （qemu 主仓）
-#   0002-libslirp-dns-env.patch -> src/qemu-mainline/subprojects/slirp
+#   0001-henge-port.patch       -> src/qemu-henge                （qemu 主仓）
+#   0002-libslirp-dns-env.patch -> src/qemu-henge/subprojects/slirp
 #
 # 为什么 libslirp 要单独一个文件：subprojects/slirp 是**独立 git 仓库**
 # （subprojects/slirp.wrap 指向 libslirp.git，qemu 主仓不跟踪它的内容），
@@ -21,7 +21,7 @@
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
-QEMU=$ROOT/src/qemu-mainline
+QEMU=$ROOT/src/qemu-henge
 SLIRP=$QEMU/subprojects/slirp
 P1=$HERE/0001-henge-port.patch
 P2=$HERE/0002-libslirp-dns-env.patch
@@ -37,7 +37,7 @@ one() {
     dir=$1; patch=$2; label=$3; want=$4
     [ -d "$dir/.git" ] || {
         echo "apply: 没有 $dir/.git" >&2
-        echo "       先跑: git submodule update --init --depth 1 src/qemu-mainline" >&2
+        echo "       先跑: git submodule update --init --depth 1 src/qemu-henge" >&2
         exit 1
     }
     [ -f "$patch" ] || { echo "apply: 缺 $patch" >&2; exit 1; }
@@ -89,6 +89,6 @@ if [ "$MODE" = --revert ]; then
 fi
 
 if [ "$MODE" = apply ]; then
-    echo "下一步: ninja -C src/qemu-mainline/build qemu-system-aarch64"
+    echo "下一步: ninja -C src/qemu-henge/build qemu-system-aarch64"
 fi
 exit 0

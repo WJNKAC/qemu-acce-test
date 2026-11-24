@@ -38,7 +38,7 @@ set -e
 cd /work/probe
 aarch64-linux-gnu-gcc -nostdlib -nostartfiles -T probe.ld -o probe.elf probe.S 2>/dev/null
 aarch64-linux-gnu-readelf -h probe.elf | grep -E "Entry point"
-cd /src/qemu-mainline
+cd /src/qemu-henge
 export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 Q=./build/qemu-system-aarch64
 M="-M virt -cpu cortex-a57 -m 256 -smp 1 -nographic"

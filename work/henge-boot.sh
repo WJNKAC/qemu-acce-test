@@ -28,7 +28,7 @@ as_root cp "$IMAGE" "$CT/overlay/work/img/Image"
 RUN=$(mktemp)
 cat > "$RUN" <<EOS
 set -e
-cd /src/qemu-mainline
+cd /src/qemu-henge
 export QEMU_LD_PREFIX=/usr/aarch64-linux-gnu
 Q=./build/qemu-system-aarch64
 COMMON="-M virt -cpu max -m 512 -nographic -no-reboot"

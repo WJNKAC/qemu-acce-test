@@ -45,12 +45,12 @@ cd port-android/patches
 git clone <this-repo> && cd <this-repo>
 git submodule update --init --depth 1     # qemu 1.1G，--depth 1 只要快照
 port-android/patches/apply.sh
-cd src/qemu-mainline && meson setup build && ninja -C build qemu-system-aarch64
+cd src/qemu-henge && meson setup build && ninja -C build qemu-system-aarch64
 ```
 
 ## 基线钉死在 v11.1.3
 
-`apply.sh` 会校验 `src/qemu-mainline` 的 HEAD 必须是
+`apply.sh` 会校验 `src/qemu-henge` 的 HEAD 必须是
 `005c61c0ef6f6ae615283440b4bb7be51b2c6ddd`（`v11.1.3`）。
 
 **为什么这么硬**：`port-android/QEMU-BACKEND.md` 里从 13.1 到 13.20 的所有测量
@@ -79,12 +79,12 @@ accel/henge/engine/
 改引擎的正确顺序：
 
 ```sh
-cd src/qemu-mainline/accel/henge/engine
+cd src/qemu-henge/accel/henge/engine
 ./sync-from-upstream.sh --check      # 先确认没漂移
 # ... 改 core/*.c ...
 ./sync-from-upstream.sh              # 重新生成 local-edits.patch
 # 然后把整个移植层重新导出：
-cd src/qemu-mainline && git add -N -f accel/henge include/system/henge-*.h
+cd src/qemu-henge && git add -N -f accel/henge include/system/henge-*.h
 git diff HEAD --binary > ../../port-android/patches/0001-henge-port.patch
 git reset
 ```
@@ -93,6 +93,6 @@ git reset
 
 | 坑 | 说明 |
 |---|---|
-| `*.patch` 被 qemu 自己 ignore | `src/qemu-mainline/.gitignore:21` 有 `*.patch`，`accel/henge/engine/local-edits.patch` 会被忽略。导出时要用 `git add -N -f`（`-f` 强制） |
+| `*.patch` 被 qemu 自己 ignore | `src/qemu-henge/.gitignore:21` 有 `*.patch`，`accel/henge/engine/local-edits.patch` 会被忽略。导出时要用 `git add -N -f`（`-f` 强制） |
 | `git status` 显示 submodule dirty | 正常。移植层就是 dirty 的，撤回用 `./apply.sh --revert` |
 | 新增空目录不会被 patch 删除 | `--revert` 后 `accel/henge/engine/compat/{mach,libkern}` 可能残留空目录，脚本里已 `rmdir` |
