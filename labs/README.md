@@ -5,9 +5,11 @@
 | 路径 | 内容 |
 |---|---|
 | `STATE-2026-11-19.md` | **当前状态存档**：结论、改动清单、实测数据、环境、下一步 |
-| `recon/henge-seam-structure.md` | 结构性分析：所有权矩阵、ARM 特殊性证据、接缝清单 |
+| `../docs/henge-seam-structure.md` | 结构性分析：所有权矩阵、ARM 特殊性证据、接缝清单 |
 | `snapshot-2026-11-19/` | 一期读穿透改造的 12 个文件快照（可还原） |
 | `logs/` | 测试日志归档（`rt2.out` 含活锁的确切指数增长曲线） |
+| `recon/` | 可复跑的脚本：`corpus.sh`（六病人）、`a5wall.sh`（墙 + IAR）、`bench.c`（并行基准） |
+| `../docs/DESIGN-degraft.md` / `../docs/VERDICT.md` | 设计稿与判决书（分析/说明统一放 docs/） |
 
 ## 时间线
 

@@ -123,7 +123,7 @@ passt 需要 `--fd`（不需要 `/dev/net/tun`、不需要 userns）。
 这台设备上它要关掉三层自我隔离才能跑：`HV_PASST_NO_USERNS`、
 `HV_PASST_NO_SANDBOX`、`HV_PASST_NO_SECCOMP`（由 hv-linux 自动设置）。
 实测能完成 DHCP/DNS/HTTP 200，但吞吐异常，默认仍是 slirp。
-细节与六处 bionic 兼容改动见 [`FINDINGS.md`](FINDINGS.md) 第八节。
+细节与六处 bionic 兼容改动见 [`FINDINGS.md`](../docs/FINDINGS.md) 第八节。
 
 ### 客户机行为（内核命令行）
 
@@ -177,7 +177,7 @@ PCIe `pci-host-ecam-generic`、`arm,armv8-timer`、`linux,dummy-virt`。
    `multi-user.target`，getty 起在 ttyAMA0，**网络通**（libslirp NAT，
    大文件 10.6 MB/s，`curl` deb.debian.org 返回 HTTP 200，`apt-get update` 成功）
 
-详见 [`FINDINGS.md`](FINDINGS.md)。
+详见 [`FINDINGS.md`](../docs/FINDINGS.md)。
 
 ```
 [    1.453077] Run /sbin/init as init process
@@ -189,7 +189,7 @@ PCIe `pci-host-ecam-generic`、`arm,armv8-timer`、`linux,dummy-virt`。
 [    4.304917] reboot: Power down
 ```
 
-1/2/4 vCPU 都验证过。**性能对比见 [BENCH.md](BENCH.md)**：同一台设备、同一个静态
+1/2/4 vCPU 都验证过。**性能对比见 [BENCH.md](../docs/BENCH.md)**：同一台设备、同一个静态
 二进制，与 QEMU TCG（Termux 的 aarch64 原生构建，同 ISA）比：
 
 | 负载 | 原生 | QEMU TCG | 本移植 | 本移植 vs TCG |
