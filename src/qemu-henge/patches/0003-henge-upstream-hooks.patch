@@ -1,0 +1,1371 @@
+diff --git a/hmp-commands.hx b/hmp-commands.hx
+index 7ae2468a3d..30fde9ec46 100644
+--- a/hmp-commands.hx
++++ b/hmp-commands.hx
+@@ -748,6 +748,42 @@ SRST
+   with optional scroll axis *dz*.
+ ERST
+ 
++    {
++        .name       = "mouse_abs",
++        .args_type  = "x:i,y:i",
++        .params     = "x y",
++        .help       = "move the active mouse to absolute screen pixel coordinates",
++        .cmd        = hmp_mouse_abs,
++    },
++
++SRST
++``mouse_abs`` *x* *y*
++  Move the active mouse to absolute pixel coordinates *x* *y* on the
++  current graphical console. Unlike ``mouse_move`` (which takes relative
++  deltas), this positions the pointer directly, which is what you want
++  when driving a GUI from a script.
++ERST
++
++    {
++        .name       = "henge_irq",
++        .args_type  = "",
++        .params     = "",
++        .help       = "show henge per-vCPU interrupt line vs QEMU's request bits",
++        .cmd        = hmp_henge_irq,
++    },
++
++SRST
++``henge_irq``
++  For every vCPU, print the two sides of the interrupt join: the level the
++  engine is holding (what ``wait_for_interrupt`` reads) and QEMU's
++  ``CPU_INTERRUPT_HARD``/``FIQ`` bits (what ``henge_sync_irq`` copies).
++
++  When a guest spins at full host speed without making progress these two
++  disagree. ``hv_engine_set_irq()`` is the only writer and nothing lowers the
++  line on its own, so a level that stays high while the request bits are clear
++  is a stale copy -- the engine then returns from WFI immediately, forever.
++ERST
++
+     {
+         .name       = "mouse_button",
+         .args_type  = "button_state:i",
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 219597cabd..714f483cfe 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -50,6 +50,7 @@
+ #include "system/hvf.h"
+ #include "system/whpx.h"
+ #include "system/qtest.h"
++#include "system/henge-accel.h"
+ #include "system/system.h"
+ #include "hw/core/loader.h"
+ #include "qapi/error.h"
+@@ -2722,7 +2723,14 @@ static void finalize_gic_version(VirtMachineState *vms)
+         if (!(!hvf_irqchip_in_kernel() && vms->virt)) {
+             gics_supported |= VIRT_GIC_VERSION_3_MASK;
+         }
+-    } else if (tcg_enabled() || qtest_enabled())  {
++    } else if (tcg_enabled() || qtest_enabled() || henge_enabled()) {
++        /*
++         * Henge emulates the GIC the same way TCG does -- in QEMU, not in the
++         * accelerator -- so it gets the same set of versions.  The engine has
++         * no interrupt controller of its own (its gicv3.c is not vendored);
++         * interrupts reach it through HvPerCpu's irq_line, which is what a
++         * later step wires up.
++         */
+         gics_supported |= VIRT_GIC_VERSION_2_MASK;
+         if (module_object_class_by_name("arm-gicv3")) {
+             gics_supported |= VIRT_GIC_VERSION_3_MASK;
+diff --git a/hw/intc/arm_gic.c b/hw/intc/arm_gic.c
+index 4d4b79e6f3..de8872f418 100644
+--- a/hw/intc/arm_gic.c
++++ b/hw/intc/arm_gic.c
+@@ -29,6 +29,8 @@
+ #include "trace.h"
+ #include "system/kvm.h"
+ #include "system/qtest.h"
++#include "hw/intc/arm_gic.h"
++#include "qom/object.h"
+ 
+ /* #define DEBUG_GIC */
+ 
+@@ -221,7 +223,56 @@ static inline void gic_update_internal(GICState *s, bool virt)
+ 
+         qemu_set_irq(irq_lines[cpu], irq_level);
+         qemu_set_irq(fiq_lines[cpu], fiq_level);
++        /* O2: 状态变了但线没变（同电平重算）也要让消费者看一次。 */
++        {
++            extern void (*arm_irq_line_hook)(CPUState *, int, int);
++            extern struct CPUState *qemu_get_cpu(int);
++            CPUState *hcs = qemu_get_cpu(cpu + s->first_cpu_index);
++            static int last_lvl[8];
++            unsigned oi = cpu & 7;
++            if (arm_irq_line_hook && hcs && hcs != current_cpu &&
++                irq_level != last_lvl[oi]) {
++                arm_irq_line_hook(hcs, 0 /* ARM_CPU_IRQ */, irq_level);
++                last_lvl[oi] = irq_level;
++            }
++        }
++        if (!virt) {
++            static int t2 = -1;
++            if (t2 < 0) t2 = getenv("HENGE_GICV2_TRACE") != NULL;
++            if (t2 && (best_irq != 1023 || irq_level))
++                fprintf(stderr, "henge-gicv2: t=%lldus update cpu=%d best=%d prio=%d pmask=%d runprio=%d "
++                        "level=%d curpend=%d\n", (long long)g_get_monotonic_time(), cpu, best_irq, best_prio,
++                        s->priority_mask[cpu_iface], s->running_priority[cpu_iface],
++                        irq_level, s->current_pending[cpu_iface]);
++        }
++    }
++}
++
++/* 退出层探针：停顿发生时（无 IAR、无更新）也能读到 GIC 的内部判定状态。
++   BQL 由调用者（vCPU 线程的 WFI 出口）持有；这是诊断读数，不是状态路径。 */
++void henge_gicv2_dump_state(int cpu);
++void henge_gicv2_dump_state(int cpu)
++{
++    Object *o = object_resolve_path_type("/machine/intc", TYPE_ARM_GIC, NULL);
++    GICState *s = o ? ARM_GIC(o) : NULL;
++    if (!s) {
++        fprintf(stderr, "henge-gicstate: no arm_gic at /machine/intc\n");
++        return;
+     }
++    if (cpu < 0 || cpu >= s->num_cpu) {
++        return;
++    }
++    fprintf(stderr, "henge-gicstate: cpu%d runprio=%d curpend=%d pmask=%d ctlr=%x active:",
++            cpu, s->running_priority[cpu], s->current_pending[cpu],
++            s->priority_mask[cpu], s->ctlr);
++    int shown = 0;
++    for (int i = 0; i < GIC_MAXIRQ && shown < 8; i++) {
++        if (s->irq_state[i].active & (1u << cpu)) {
++            fprintf(stderr, " %d", i);
++            shown++;
++        }
++    }
++    fprintf(stderr, " (none)\n");
+ }
+ 
+ static void gic_update(GICState *s)
+@@ -1523,6 +1574,37 @@ static void gic_dist_writel(void *opaque, hwaddr offset,
+             break;
+         }
+         GIC_DIST_SET_PENDING(irq, mask);
++        {
++            static int t = -1;
++            if (t < 0) t = getenv("HENGE_GICV2_TRACE") != NULL;
++            if (t) fprintf(stderr, "henge-gicv2: t=%lldus SGIR irq=%d mask=%x from_cpu=%d\n",
++                           (long long)g_get_monotonic_time(), irq, mask, cpu);
++            /* 银行化视图：gic_get_best_irq(cpu) 实际读的那些字段，按核分开。
++               QEMU 的 current_cpu 与 gic_get_current_cpu() 并排，验证"访问时上下文"契约。 */
++            {
++                static int b = -1;
++                if (b < 0) b = getenv("HENGE_GICV2_BANK") != NULL;
++                if (b) {
++                    int qc = current_cpu ? (int)current_cpu->cpu_index : -1;
++                    int gc = -1;
++                    int nc = s->num_cpu;
++                    if (s->num_cpu > 1 && current_cpu)
++                        gc = (int)current_cpu->cpu_index - s->first_cpu_index;
++                    for (int c = 0; c < nc; c++) {
++                        fprintf(stderr,
++                                "henge-bank: t=%lldus irq=%d cur_cpu=%d gic_cpu=%d | "
++                                "cpu%d pend=%d en=%d grp=%d prio=%d pmask=%d run=%d curpend=%d\n",
++                                (long long)g_get_monotonic_time(), irq, qc, gc, c,
++                                (s->irq_state[irq].pending & (1 << c)) ? 1 : 0,
++                                GIC_DIST_TEST_ENABLED(irq, 1 << c) ? 1 : 0,
++                                GIC_DIST_TEST_GROUP(irq, 1 << c) ? 1 : 0,
++                                gic_get_priority(s, irq, c),
++                                s->priority_mask[c], s->running_priority[c],
++                                s->current_pending[c]);
++                    }
++                }
++            }
++        }
+         target_cpu = ctz32(mask);
+         while (target_cpu < GIC_NCPU) {
+             s->sgi_pending[irq][target_cpu] |= (1 << cpu);
+diff --git a/hw/intc/arm_gicv3.c b/hw/intc/arm_gicv3.c
+index e93c1df5b4..c7e187eabe 100644
+--- a/hw/intc/arm_gicv3.c
++++ b/hw/intc/arm_gicv3.c
+@@ -16,6 +16,8 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "system/henge-engine.h"
++#include "qemu/timer.h"
+ #include "qapi/error.h"
+ #include "qemu/module.h"
+ #include "hw/intc/arm_gicv3.h"
+@@ -246,8 +248,20 @@ static void gicv3_redist_update_noirqset(GICv3CPUState *cs)
+  */
+ void gicv3_redist_update(GICv3CPUState *cs)
+ {
++    int64_t t0 = getenv("HENGE_IAR_SPLIT") ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+     gicv3_redist_update_noirqset(cs);
++    int64_t t1 = t0 ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+     gicv3_cpuif_update(cs);
++    if (t0) {
++        int64_t t2 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
++        static uint64_t rn, rsum, csum, rmax;
++        uint64_t r = (uint64_t)(t1 - t0), c = (uint64_t)(t2 - t1);
++        rn++; rsum += r; csum += c; if (r > rmax) rmax = r;
++        if ((rn % 256) == 0)
++            fprintf(stderr, "henge-redistsplit: n=%llu scan_avg=%lluns cpuif_avg=%lluns scan_max=%lluns\n",
++                    (unsigned long long)rn, (unsigned long long)(rsum / rn),
++                    (unsigned long long)(csum / rn), (unsigned long long)rmax);
++    }
+ }
+ 
+ /* Update the GIC status after state in the distributor has
+@@ -380,6 +394,16 @@ static void gicv3_set_irq(void *opaque, int irq, int level)
+      */
+     GICv3State *s = opaque;
+ 
++    /* 影子镜像：入口 tap（影子领先 QEMU 的窗口是已知咨询级瞬态；settle 点复核等价）。 */
++    if (henge_gic_taps_active()) {
++        if (irq < (s->num_irq - GIC_INTERNAL)) {
++            henge_shadow_spi(irq + GIC_INTERNAL, level);
++        } else {
++            int idx = irq - (s->num_irq - GIC_INTERNAL);
++            henge_shadow_ppi(idx / GIC_INTERNAL, idx % GIC_INTERNAL, level);
++        }
++    }
++
+     if (irq < (s->num_irq - GIC_INTERNAL)) {
+         /* external interrupt (SPI) */
+         gicv3_dist_set_irq(s, irq + GIC_INTERNAL, level);
+diff --git a/hw/intc/arm_gicv3_cpuif.c b/hw/intc/arm_gicv3_cpuif.c
+index 67a0bba4b0..32f3ffda1c 100644
+--- a/hw/intc/arm_gicv3_cpuif.c
++++ b/hw/intc/arm_gicv3_cpuif.c
+@@ -27,6 +27,9 @@
+ #include "system/tcg.h"
+ #include "system/qtest.h"
+ 
++static void henge_sgi_alarm_consume(GICv3CPUState *cs, uint32_t intid);
++static void henge_sgi_alarm_check(GICv3CPUState *cs);
++
+ /*
+  * Special case return value from hppvi_index(); must be larger than
+  * the architecturally maximum possible list register index (which is 15)
+@@ -982,6 +985,139 @@ static uint32_t icc_gprio_mask(GICv3CPUState *cs, int group)
+     return ~0U << (bpr + 1);
+ }
+ 
++/* HENGE_SGI_ALARM: 两点告警链 —— SGI 发送时记录，目标 5 ms 未消费则 dump。
++   间歇性竞态用单点快照抓不住；这里只对"已发送未消费"的目标报一次。 */
++void henge_gic_dump(int cpu_index)
++{
++    CPUState *csq = qemu_get_cpu(cpu_index);
++    if (!csq) return;
++    CPUARMState *env = &ARM_CPU(csq)->env;
++    GICv3CPUState *cs = env->gicv3state;
++    if (!cs) { fprintf(stderr, "henge-gic-dump: cpu%d no gicv3state\n", cpu_index); return; }
++    fprintf(stderr,
++        "henge-gic-dump: cpu%d bit1(is=%d pend=%d act=%d prio=%u grp=%d) "
++        "bit27(is=%d pend=%d act=%d prio=%u) igrpen1=%llu pmr=%llu "
++        "ctlr=%llx eoimode=%d hppi=%u/%u vt_cval=%llx vt_ctl=%llx\n",
++        cpu_index,
++        !!(cs->gicr_ienabler0 & (1u << 1)),
++        !!(cs->gicr_ipendr0 & (1u << 1)),
++        !!(cs->gicr_iactiver0 & (1u << 1)),
++        cs->gicr_ipriorityr[1], !!(cs->gicr_igroupr0 & (1u << 1)),
++        !!(cs->gicr_ienabler0 & (1u << 27)),
++        !!(cs->gicr_ipendr0 & (1u << 27)),
++        !!(cs->gicr_iactiver0 & (1u << 27)),
++        cs->gicr_ipriorityr[27],
++        (unsigned long long)cs->icc_igrpen[GICV3_G1NS],
++        (unsigned long long)cs->icc_pmr_el1,
++        (unsigned long long)cs->icc_ctlr_el1[0],
++        (int)((cs->icc_ctlr_el1[0] & 2) != 0),
++        cs->hppi.irq, cs->hppi.prio,
++        (unsigned long long)env->cp15.c14_timer[GTIMER_VIRT].cval,
++        (unsigned long long)env->cp15.c14_timer[GTIMER_VIRT].ctl);
++}
++
++uint64_t henge_gic_propbaser(int cpu_index)
++{
++    CPUState *csq = qemu_get_cpu(cpu_index);
++    if (!csq) return 0;
++    CPUARMState *env = &ARM_CPU(csq)->env;
++    GICv3CPUState *cs = env->gicv3state;
++    return cs ? cs->gicr_propbaser : 0;
++}
++
++uint64_t henge_gic_pendbaser(int cpu_index)
++{
++    CPUState *csq = qemu_get_cpu(cpu_index);
++    if (!csq) return 0;
++    CPUARMState *env = &ARM_CPU(csq)->env;
++    GICv3CPUState *cs = env->gicv3state;
++    return cs ? cs->gicr_pendbaser : 0;
++}
++
++int henge_gic_hppi_is_lpi(int cpu_index)
++{
++    CPUState *csq = qemu_get_cpu(cpu_index);
++    if (!csq) return 0;
++    CPUARMState *env = &ARM_CPU(csq)->env;
++    GICv3CPUState *cs = env->gicv3state;
++    return cs && cs->hppi.irq >= 8192;
++}
++
++static bool icc_hppi_can_preempt(GICv3CPUState *cs);
++static int icc_highest_active_prio(GICv3CPUState *cs);
++
++static struct { int64_t deadline_us, enter_us; uint32_t irq; int armed, dumped; } henge_sgi_arm[8];
++/* 掩蔽段普查：Σ 时长 = 残差第一嫌疑人。 */
++static struct { uint64_t n, sum_us, max_us, hist[4]; } henge_sgi_census[8];
++
++static void henge_sgi_alarm_arm(GICv3CPUState *ocs, uint32_t irq)
++{
++    unsigned ci = ocs->cpu ? ocs->cpu->cpu_index : 0;
++    if (ci < 8) {
++        henge_sgi_arm[ci].enter_us = g_get_monotonic_time();
++        henge_sgi_arm[ci].deadline_us = henge_sgi_arm[ci].enter_us + 5000;
++        henge_sgi_arm[ci].irq = irq;
++        henge_sgi_arm[ci].armed = 1;
++        henge_sgi_arm[ci].dumped = 0;
++    }
++}
++
++static void henge_sgi_alarm_consume(GICv3CPUState *ocs, uint32_t intid)
++{
++    unsigned ci = ocs->cpu ? ocs->cpu->cpu_index : 0;
++    if (ci < 8 && henge_sgi_arm[ci].armed) {
++        uint64_t d = (uint64_t)(g_get_monotonic_time() - henge_sgi_arm[ci].enter_us);
++        henge_sgi_arm[ci].armed = 0;
++        henge_sgi_census[ci].n++;
++        henge_sgi_census[ci].sum_us += d;
++        if (d > henge_sgi_census[ci].max_us) henge_sgi_census[ci].max_us = d;
++        henge_sgi_census[ci].hist[d < 100 ? 0 : d < 1000 ? 1 : d < 5000 ? 2 : 3]++;
++        if (getenv("HENGE_SGI_ALARM") && (henge_sgi_census[ci].n % 64) == 0) {
++            fprintf(stderr, "henge-sgicensus: cpu%u n=%llu sum=%llums max=%lluus "
++                    "hist<0.1/1/5/>5ms=%llu/%llu/%llu/%llu\n", ci,
++                    (unsigned long long)henge_sgi_census[ci].n,
++                    (unsigned long long)(henge_sgi_census[ci].sum_us / 1000),
++                    (unsigned long long)henge_sgi_census[ci].max_us,
++                    (unsigned long long)henge_sgi_census[ci].hist[0],
++                    (unsigned long long)henge_sgi_census[ci].hist[1],
++                    (unsigned long long)henge_sgi_census[ci].hist[2],
++                    (unsigned long long)henge_sgi_census[ci].hist[3]);
++        }
++    }
++}
++
++static void henge_sgi_alarm_check(GICv3CPUState *ocs)
++{
++    unsigned ci = ocs->cpu ? ocs->cpu->cpu_index : 0;
++    if (ci >= 8 || !henge_sgi_arm[ci].armed || henge_sgi_arm[ci].dumped) return;
++    if (!getenv("HENGE_SGI_ALARM")) return;
++    int64_t now = g_get_monotonic_time();
++    if (now < henge_sgi_arm[ci].deadline_us) return;
++    henge_sgi_arm[ci].dumped = 1;
++    fprintf(stderr, "henge-sgialarm: t=%lldus cpu%u irq=%u hppi=%u prio=%u can_preempt=%d "
++            "hard=%d halted=%d kicked=%d runprio=%u pmr=%u igrpen_ns=%d ctlr=%x\n",
++            (long long)now, ci, henge_sgi_arm[ci].irq,
++            ocs->hppi.irq, ocs->hppi.prio,
++            (int)icc_hppi_can_preempt(ocs),
++            ocs->cpu ? !!(ocs->cpu->interrupt_request & CPU_INTERRUPT_HARD) : -1,
++            ocs->cpu ? ocs->cpu->halted : -1,
++            ocs->cpu ? qatomic_read(&ocs->cpu->thread_kicked) : -1,
++            (unsigned)icc_highest_active_prio(ocs),
++            (unsigned)ocs->icc_pmr_el1,
++            (int)(ocs->icc_igrpen[GICV3_G1NS] & 1), ocs->gic->gicd_ctlr);
++    {
++        extern uint64_t henge_engine_pc[8];
++        extern uint64_t henge_engine_daif[8];
++        { extern void henge_debug_dump_code(int); henge_debug_dump_code((int)ci); }
++        if (ci < 8)
++            fprintf(stderr, "  sgialarm-detail: cpu%u engine_pc=%llx daif=%llx "
++                    "kernel=%d\n", ci,
++                    (unsigned long long)henge_engine_pc[ci],
++                    (unsigned long long)henge_engine_daif[ci],
++                    !!(henge_engine_pc[ci] >> 63));
++    }
++}
++
+ static bool icc_no_enabled_hppi(GICv3CPUState *cs)
+ {
+     /* Return true if there is no pending interrupt, or the
+@@ -1046,6 +1182,7 @@ static bool icc_hppi_can_preempt(GICv3CPUState *cs)
+ 
+ void gicv3_cpuif_update(GICv3CPUState *cs)
+ {
++    henge_sgi_alarm_check(cs);
+     /* Tell the CPU about its highest priority pending interrupt */
+     int irqlevel = 0;
+     int fiqlevel = 0;
+@@ -1097,9 +1234,59 @@ void gicv3_cpuif_update(GICv3CPUState *cs)
+ 
+     trace_gicv3_cpuif_set_irqs(gicv3_redist_affid(cs), fiqlevel, irqlevel);
+ 
++    /*
++     * HENGE_DEBUG (2026-11-19): log every CPU-line edge with the INTID that
++     * caused it.  Used to find out which interrupt keeps the line asserted
++     * after the guest EOI's -- the reason the honest (read-through) level
++     * livelocks WFI.  Off unless HENGE_GIC_TRACE is set.
++     */
++    if (getenv("HENGE_GIC_TRACE")) {
++        static int last_irq[8], last_fiq[8];
++        unsigned ci = cs->cpu->cpu_index & 7;
++        if (irqlevel != last_irq[ci] || fiqlevel != last_fiq[ci]) {
++            fprintf(stderr, "henge-gic: cpu%u irq %d->%d fiq %d->%d "
++                    "intid=%u grp=%d prio=%u\n",
++                    ci, last_irq[ci], irqlevel, last_fiq[ci], fiqlevel,
++                    cs->hppi.irq, cs->hppi.grp, cs->hppi.prio);
++            last_irq[ci] = irqlevel;
++            last_fiq[ci] = fiqlevel;
++        }
++    }
+     qemu_set_irq(cs->parent_fiq, fiqlevel);
+     qemu_set_irq(cs->parent_irq, irqlevel);
+     qemu_set_irq(cs->parent_nmi, nmilevel);
++    /* 诊断：parked CPU 有 pending 但线被压住（hppi 非空、irq/fiq 都为 0）——
++       区分"GICv3 cpuif 门"与"park 谓词/唤醒"两半。HENGE_PARKED_TRACE=1 时打。 */
++    if (getenv("HENGE_PARKED_TRACE") && cs->cpu && cs->cpu->halted &&
++        cs->hppi.irq != INTID_SPURIOUS && irqlevel == 0 && fiqlevel == 0) {
++        static unsigned n[8];
++        unsigned ci = cs->cpu->cpu_index & 7;
++        if (n[ci]++ < 200)
++            fprintf(stderr, "henge-parked: t=%lldus cpu%u hppi=%u prio=%u grp=%d pmr=%u "
++                    "igrpen0=%d igrpen1=%d halted=%d\n",
++                    (long long)g_get_monotonic_time(), ci, cs->hppi.irq, cs->hppi.prio,
++                    cs->hppi.grp, (unsigned)cs->icc_pmr_el1,
++                    (int)(cs->icc_igrpen[0] & 1), (int)(cs->icc_igrpen[1] & 1),
++                    cs->cpu->halted);
++    }
++    /* O2 (v3): 每次 update 都通知消费者看一次，封"状态变、线没变"的缝。 */
++    {
++        extern void (*arm_irq_line_hook)(CPUState *, int, int);
++        /* 自己核的 ICC 访问已经走 seam exit 回宿主一次，不需要再为它置 sticky
++           （否则每次 ICC 访问多一次宿主往返，v3 中断密集负载会慢一倍以上）。
++           跨核（目标 != 当前）才需要这次通知。 */
++        /* O2 迁移语义：只在电平变迁（升/降）时通知；同线重复不算事件，
++           否则每次 update 都置 sticky，门控出口会退化成风暴。 */
++        static int last_irq[8], last_fiq[8];
++        unsigned oi = cs->cpu ? (cs->cpu->cpu_index & 7) : 0;
++        if (arm_irq_line_hook && cs->cpu != current_cpu &&
++            (irqlevel != last_irq[oi] || fiqlevel != last_fiq[oi])) {
++            arm_irq_line_hook(cs->cpu, 1 /* FIQ */, fiqlevel);
++            arm_irq_line_hook(cs->cpu, 0 /* IRQ */, irqlevel);
++            last_irq[oi] = irqlevel;
++            last_fiq[oi] = fiqlevel;
++        }
++    }
+ }
+ 
+ static uint64_t icc_pmr_read(CPUARMState *env, const ARMCPRegInfo *ri)
+@@ -1174,6 +1361,7 @@ static void icc_activate_irq(GICv3CPUState *cs, int irq)
+         cs->icc_apr[cs->hppi.grp][regno] |= (1U << regbit);
+     }
+ 
++    int64_t ha0 = getenv("HENGE_IAR_SPLIT") ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+     if (irq < GIC_INTERNAL) {
+         cs->gicr_iactiver0 = deposit32(cs->gicr_iactiver0, irq, 1, 1);
+         cs->gicr_ipendr0 = deposit32(cs->gicr_ipendr0, irq, 1, 0);
+@@ -1185,6 +1373,15 @@ static void icc_activate_irq(GICv3CPUState *cs, int irq)
+     } else {
+         gicv3_redist_lpi_pending(cs, irq, 0);
+     }
++    if (ha0) {
++        static uint64_t an, asum, amax;
++        uint64_t d = (uint64_t)(qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - ha0);
++        an++; asum += d; if (d > amax) amax = d;
++        if ((an % 256) == 0)
++            fprintf(stderr, "henge-actsplit: n=%llu update_avg=%lluns update_max=%lluns irq=%d\n",
++                    (unsigned long long)an, (unsigned long long)(asum / an),
++                    (unsigned long long)amax, irq);
++    }
+ }
+ 
+ static uint64_t icc_hppir0_value(GICv3CPUState *cs, CPUARMState *env)
+@@ -1283,6 +1480,9 @@ static uint64_t icc_iar0_read(CPUARMState *env, const ARMCPRegInfo *ri)
+     return intid;
+ }
+ 
++static void henge_sgi_alarm_consume(GICv3CPUState *cs, uint32_t intid);
++static void henge_sgi_alarm_check(GICv3CPUState *cs);
++
+ static uint64_t icc_iar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
+ {
+     GICv3CPUState *cs = icc_cs_from_env(env);
+@@ -1293,19 +1493,44 @@ static uint64_t icc_iar1_read(CPUARMState *env, const ARMCPRegInfo *ri)
+         return icv_iar_read(env, ri);
+     }
+ 
++    int64_t hs0 = getenv("HENGE_IAR_SPLIT") ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+     if (!icc_hppi_can_preempt(cs)) {
+         intid = INTID_SPURIOUS;
+     } else {
+         intid = icc_hppir1_value(cs, env);
+     }
++    int64_t hs1 = hs0 ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+ 
++    if (getenv("HENGE_LPI_TRACE") && intid >= 8192)
++        fprintf(stderr, "lpi-trace: qemu iar intid=%llu t=%lld\n",
++                (unsigned long long)intid, (long long)qemu_clock_get_ns(QEMU_CLOCK_REALTIME));
+     if (!gicv3_intid_is_special(intid)) {
++        henge_sgi_alarm_consume(cs, (uint32_t)intid);
+         if (cs->hppi.nmi && env->cp15.sctlr_el[el] & SCTLR_NMI) {
+             intid = INTID_NMI;
+         } else {
+             icc_activate_irq(cs, intid);
+         }
+     }
++    if (hs0) {
++        int64_t hs2 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
++        static uint64_t n, sum_claim, sum_act, max_claim, hist[8];
++        uint64_t c = (uint64_t)(hs1 - hs0), a = (uint64_t)(hs2 - hs1), tot = c + a;
++        n++; sum_claim += c; sum_act += a; if (c > max_claim) max_claim = c;
++        hist[tot < 2000 ? 0 : tot < 5000 ? 1 : tot < 10000 ? 2 : tot < 20000 ? 3 :
++             tot < 40000 ? 4 : tot < 80000 ? 5 : tot < 160000 ? 6 : 7]++;
++        if ((n % 256) == 0)
++            fprintf(stderr, "henge-iarsplit: n=%llu claim_avg=%lluns act_avg=%lluns "
++                    "claim_max=%lluns hist(<2/5/10/20/40/80/160/>=160us)=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu\n",
++                    (unsigned long long)n,
++                    (unsigned long long)(sum_claim / n),
++                    (unsigned long long)(sum_act / n),
++                    (unsigned long long)max_claim,
++                    (unsigned long long)hist[0], (unsigned long long)hist[1],
++                    (unsigned long long)hist[2], (unsigned long long)hist[3],
++                    (unsigned long long)hist[4], (unsigned long long)hist[5],
++                    (unsigned long long)hist[6], (unsigned long long)hist[7]);
++    }
+ 
+     trace_gicv3_icc_iar1_read(gicv3_redist_affid(cs), intid);
+     return intid;
+@@ -2088,8 +2313,39 @@ static void icc_generate_sgi(CPUARMState *env, GICv3CPUState *cs,
+             }
+         }
+ 
++        /* HENGE_SGI_TRACE: 发送瞬间目标核的状态（区分"线没拉高"与"崩溃后才清 GIC"）。 */
++        if (getenv("HENGE_SGI_TRACE")) {
++            static unsigned sn;
++            if (sn++ < 300)
++                fprintf(stderr, "henge-sgi: t=%lldus from_cpu%d irq=%u grp=%d irm=%d "
++                        "to_cpu%d halted=%d igrpen_ns=%d igrpen_g0=%d ctlr=%x pmr=%u "
++                        "can_preempt=%d hppi=%u/%u\n",
++                        (long long)g_get_monotonic_time(),
++                        cs->cpu ? cs->cpu->cpu_index : -1, irq, grp, (int)irm,
++                        ocs->cpu ? ocs->cpu->cpu_index : -1,
++                        ocs->cpu ? ocs->cpu->halted : -1,
++                        (int)(ocs->icc_igrpen[GICV3_G1NS] & 1),
++                        (int)(ocs->icc_igrpen[GICV3_G0] & 1),
++                        ocs->gic->gicd_ctlr, (unsigned)ocs->icc_pmr_el1,
++                        (int)icc_hppi_can_preempt(ocs),
++                        ocs->hppi.irq, ocs->hppi.prio);
++        }
+         /* The redistributor will check against its own GICR_NSACR as needed */
+         gicv3_redist_send_sgi(ocs, grp, irq, ns);
++        henge_sgi_alarm_arm(ocs, irq);
++        if (getenv("HENGE_SGI_TRACE")) {
++            static unsigned sn2;
++            if (sn2++ < 300)
++                fprintf(stderr, "henge-sgipost: t=%lldus to_cpu%d hppi=%u prio=%u "
++                        "can_preempt=%d hard=%d halted=%d inflight=%d\n",
++                        (long long)g_get_monotonic_time(),
++                        ocs->cpu ? ocs->cpu->cpu_index : -1,
++                        ocs->hppi.irq, ocs->hppi.prio,
++                        (int)icc_hppi_can_preempt(ocs),
++                        ocs->cpu ? !!(ocs->cpu->interrupt_request & CPU_INTERRUPT_HARD) : -1,
++                        ocs->cpu ? ocs->cpu->halted : -1,
++                        ocs->cpu ? qatomic_read(&ocs->cpu->thread_kicked) : -1);
++        }
+     }
+ }
+ 
+diff --git a/hw/intc/arm_gicv3_dist.c b/hw/intc/arm_gicv3_dist.c
+index a7d10ed949..0ae0c7950a 100644
+--- a/hw/intc/arm_gicv3_dist.c
++++ b/hw/intc/arm_gicv3_dist.c
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "system/henge-engine.h"
+ #include "qemu/log.h"
+ #include "trace.h"
+ #include "gicv3_internal.h"
+@@ -902,6 +903,7 @@ MemTxResult gicv3_dist_write(void *opaque, hwaddr offset, uint64_t data,
+                              unsigned size, MemTxAttrs attrs)
+ {
+     GICv3State *s = (GICv3State *)opaque;
++    if (henge_gic_taps_active()) henge_shadow_dist(offset, data, size);
+     bool r;
+ 
+     switch (size) {
+@@ -935,6 +937,7 @@ MemTxResult gicv3_dist_write(void *opaque, hwaddr offset, uint64_t data,
+     } else {
+         trace_gicv3_dist_write(offset, data, size, attrs.secure);
+     }
++    if (henge_gic_taps_active()) henge_shadow_inflight_done();
+     return MEMTX_OK;
+ }
+ 
+diff --git a/hw/intc/arm_gicv3_its.c b/hw/intc/arm_gicv3_its.c
+index b639c03b67..3006a44174 100644
+--- a/hw/intc/arm_gicv3_its.c
++++ b/hw/intc/arm_gicv3_its.c
+@@ -16,6 +16,7 @@
+ #include "trace.h"
+ #include "hw/core/qdev-properties.h"
+ #include "hw/intc/arm_gicv3_its_common.h"
++#include "system/henge-engine.h"
+ #include "gicv3_internal.h"
+ #include "qom/object.h"
+ #include "qapi/error.h"
+@@ -1560,6 +1561,8 @@ static MemTxResult gicv3_its_translation_write(void *opaque, hwaddr offset,
+ 
+     switch (offset) {
+     case GITS_TRANSLATER:
++        if (henge_gic_taps_active())
++            henge_shadow_its_msi((uint32_t)attrs.requester_id, (uint32_t)data);
+         if (s->ctlr & R_GITS_CTLR_ENABLED_MASK) {
+             result = do_process_its_cmd(s, attrs.requester_id, data, NONE);
+         }
+@@ -1870,6 +1873,9 @@ static MemTxResult gicv3_its_write(void *opaque, hwaddr offset, uint64_t data,
+     GICv3ITSState *s = (GICv3ITSState *)opaque;
+     bool result;
+ 
++    /* 影子镜像：GITS 帧写（CTLR/CBASER/CWRITER/TRANSLATER）。 */
++    if (henge_gic_taps_active()) henge_shadow_its_mmio(offset, data, size);
++
+     switch (size) {
+     case 4:
+         result = its_writel(s, offset, data, attrs);
+diff --git a/hw/intc/arm_gicv3_redist.c b/hw/intc/arm_gicv3_redist.c
+index 90b238fac0..0d62764982 100644
+--- a/hw/intc/arm_gicv3_redist.c
++++ b/hw/intc/arm_gicv3_redist.c
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "system/henge-engine.h"
+ #include "qemu/log.h"
+ #include "trace.h"
+ #include "gicv3_internal.h"
+@@ -771,6 +772,12 @@ MemTxResult gicv3_redist_write(void *opaque, hwaddr offset, uint64_t data,
+                                unsigned size, MemTxAttrs attrs)
+ {
+     GICv3RedistRegion *region = opaque;
++    if (henge_gic_taps_active()) {
++        uint32_t rsz = gicv3_redist_size(region->gic);
++        uint32_t scpu = region->cpuidx + offset / rsz;
++        uint32_t inner = offset % rsz;
++        henge_shadow_redist(scpu, inner >= 0x10000, inner & 0xffff, data, size);
++    }
+     GICv3State *s = region->gic;
+     GICv3CPUState *cs;
+     MemTxResult r;
+@@ -822,6 +829,7 @@ MemTxResult gicv3_redist_write(void *opaque, hwaddr offset, uint64_t data,
+         trace_gicv3_redist_write(gicv3_redist_affid(cs), offset, data,
+                                  size, attrs.secure);
+     }
++    if (henge_gic_taps_active()) henge_shadow_inflight_done();
+     return r;
+ }
+ 
+diff --git a/include/monitor/hmp.h b/include/monitor/hmp.h
+index 9258a049bf..18b9b60266 100644
+--- a/include/monitor/hmp.h
++++ b/include/monitor/hmp.h
+@@ -106,6 +106,8 @@ void hmp_netdev_del(Monitor *mon, const QDict *qdict);
+ void hmp_getfd(Monitor *mon, const QDict *qdict);
+ void hmp_closefd(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_move(Monitor *mon, const QDict *qdict);
++void hmp_mouse_abs(Monitor *mon, const QDict *qdict);
++void hmp_henge_irq(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_button(Monitor *mon, const QDict *qdict);
+ void hmp_mouse_set(Monitor *mon, const QDict *qdict);
+ void hmp_sendkey(Monitor *mon, const QDict *qdict);
+diff --git a/include/qemu/osdep.h b/include/qemu/osdep.h
+index 1ec5b42230..8fe5d52257 100644
+--- a/include/qemu/osdep.h
++++ b/include/qemu/osdep.h
+@@ -125,6 +125,25 @@ QEMU_EXTERN_C int daemon(int, int);
+ #include <fcntl.h>
+ #include <getopt.h>
+ #include <sys/stat.h>
++
++/*
++ * bionic (Android) 的 <sys/stat.h> 把 st_atime_nsec/st_mtime_nsec/st_ctime_nsec
++ * 定义成 "st_atim.tv_nsec" 这类展开式（NDK sys/stat.h:123-125），
++ * 而 fsdev/9p-marshal.h 里的结构体成员就叫 st_atime_nsec。
++ * 于是成员声明被预处理成 "uint64_t st_atim.tv_nsec;" —— 语法错误。
++ *
++ * glibc 只定义 st_atimensec（没有下划线），所以上游在 glibc 上从不暴露这个问题。
++ * 这不是 clang 更严格，是纯粹的宏命名冲突。
++ *
++ * 只影响我们用不到的那套向后兼容别名；真要用 xattr 语义的地方走的是
++ * struct stat 的 st_atim 成员，不依赖这些宏。
++ */
++#if defined(__ANDROID__)
++#undef st_atime_nsec
++#undef st_mtime_nsec
++#undef st_ctime_nsec
++#endif
++
+ #include <sys/time.h>
+ #include <assert.h>
+ /* setjmp must be declared before system/os-win32.h
+diff --git a/subprojects/libvhost-user/libvhost-user.c b/subprojects/libvhost-user/libvhost-user.c
+index a74d814bb4..561fa1ed28 100644
+--- a/subprojects/libvhost-user/libvhost-user.c
++++ b/subprojects/libvhost-user/libvhost-user.c
+@@ -37,6 +37,11 @@
+  * <linux/vhost.h> below.
+  */
+ #include "standard-headers/linux/virtio_config.h"
++#ifdef __ANDROID__
++/* bionic's virtio_ring.h lacks vring_need_event; libvhost-user.h supplies
++ * hv_vring_need_event because the plain name can collide with QEMU's copy. */
++#define vring_need_event hv_vring_need_event
++#endif
+ 
+ #if defined(__linux__)
+ #include <sys/syscall.h>
+diff --git a/subprojects/libvhost-user/libvhost-user.h b/subprojects/libvhost-user/libvhost-user.h
+index a534d70771..580aaba0a6 100644
+--- a/subprojects/libvhost-user/libvhost-user.h
++++ b/subprojects/libvhost-user/libvhost-user.h
+@@ -20,7 +20,26 @@
+ #include <poll.h>
+ #include <linux/vhost.h>
+ #include <pthread.h>
++#ifdef __ANDROID__
++/*
++ * bionic's sysroot already ships linux/virtio_ring.h, and the bundled copy
++ * below defines the same structs -- including both is a redefinition error.
++ * Use the system one (same ABI) and supply the single helper it lacks.
++ * This is a verbatim copy of the definition in the bundled header.
++ */
++#include <linux/virtio_ring.h>
++/* QEMU's own copy of this header (include/standard-headers/) may also be on
++ * the include path and already define vring_need_event, so do not reuse that
++ * name here -- libvhost-user.c aliases it.  Verbatim definition from the
++ * bundled header. */
++static inline int hv_vring_need_event(uint16_t event_idx, uint16_t new_idx,
++                                      uint16_t old)
++{
++    return (uint16_t)(new_idx - event_idx - 1) < (uint16_t)(new_idx - old);
++}
++#else
+ #include "standard-headers/linux/virtio_ring.h"
++#endif
+ 
+ /* Based on qemu/hw/virtio/vhost-user.c */
+ #define VHOST_USER_F_PROTOCOL_FEATURES 30
+diff --git a/system/cpus.c b/system/cpus.c
+index 97e5a5edee..2ff132703f 100644
+--- a/system/cpus.c
++++ b/system/cpus.c
+@@ -572,18 +572,42 @@ void rust_bql_mock_lock(void)
+  * The BQL is taken from so many places that it is worth profiling the
+  * callers directly, instead of funneling them all through a single function.
+  */
++/* HENGE_BQL: BQL 持有者直方图（convoy 的直接证人）。 */
++static int64_t henge_bql_start;
++static int henge_bql_holder, henge_bql_n;
++static uint64_t henge_bql_bucket[4];
++static uint64_t henge_bql_by_holder[1024];
++
+ void bql_lock_impl(const char *file, int line)
+ {
+     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
+ 
+     g_assert(!bql_locked());
+     bql_lock_fn(&bql, file, line);
++    if (getenv("HENGE_BQL")) {
++        henge_bql_start = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
++        henge_bql_holder = (int)gettid();
++    }
+ }
+ 
+ void bql_unlock(void)
+ {
+     g_assert(bql_locked());
+     g_assert(!bql_unlock_blocked);
++    if (getenv("HENGE_BQL") && henge_bql_start) {
++        uint64_t d = (uint64_t)(qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - henge_bql_start);
++        henge_bql_bucket[d < 10000 ? 0 : d < 50000 ? 1 : d < 200000 ? 2 : 3]++;
++        henge_bql_by_holder[henge_bql_holder & 1023] += d;
++        henge_bql_start = 0;
++        if ((++henge_bql_n % 256) == 0) {
++            fprintf(stderr, "henge-bql: n=%d <10us=%llu 10-50=%llu 50-200=%llu >200us=%llu\n",
++                    henge_bql_n,
++                    (unsigned long long)henge_bql_bucket[0],
++                    (unsigned long long)henge_bql_bucket[1],
++                    (unsigned long long)henge_bql_bucket[2],
++                    (unsigned long long)henge_bql_bucket[3]);
++        }
++    }
+     qemu_mutex_unlock(&bql);
+ }
+ 
+diff --git a/system/physmem.c b/system/physmem.c
+index c21ea92915..711a3fa5b9 100644
+--- a/system/physmem.c
++++ b/system/physmem.c
+@@ -41,6 +41,8 @@
+ #include "hw/core/boards.h"
+ #include "system/xen.h"
+ #include "system/kvm.h"
++#include "system/henge-accel.h"
++#include "system/henge-engine.h"
+ #include "system/tcg.h"
+ #include "system/qtest.h"
+ #include "system/physmem.h"
+@@ -3306,6 +3308,41 @@ static MemTxResult flatview_write_continue(FlatView *fv, hwaddr addr,
+     return result;
+ }
+ 
++/*
++ * Audit counters for the two DMA->self-modifying-code hooks.
++ *
++ * They exist because "the hook is in place" and "the hook covers the path real
++ * devices take" are different claims, and only a counter tells them apart.  Run
++ * a boot that reads a file off a virtio disk and compare the two numbers: the
++ * mapped-DMA figure must be the one that tracks disk traffic, because
++ * virtqueue_map_desc() hands the backend a host pointer and never calls
++ * flatview_write().  If the flatview figure were the large one instead, the
++ * unmap hook would merely be duplicating it.
++ *
++ * Printed on powers of two so a whole boot costs ~20 lines and the order of
++ * magnitude is readable at a glance, rather than needing a post-processing step
++ * on a log with millions of entries.
++ */
++static struct {
++    uint64_t hits, bytes;
++    uint64_t last_report;
++} henge_dma[2];   /* [0] = flatview_write path, [1] = address_space_unmap path */
++
++static void henge_dma_account(bool mapped, uint64_t bytes)
++{
++    unsigned i = mapped ? 1 : 0;
++
++    henge_dma[i].hits++;
++    henge_dma[i].bytes += bytes;
++    if (henge_tracing(HENGE_TRACE_DMA) &&
++        henge_dma[i].hits >= henge_dma[i].last_report) {
++        henge_dma[i].last_report = henge_dma[i].hits * 2;
++        fprintf(stderr, "henge: dma[%s] %" PRIu64 " calls, %" PRIu64 " bytes\n",
++                mapped ? "map/unmap" : "flatview", henge_dma[i].hits,
++                henge_dma[i].bytes);
++    }
++}
++
+ /* Called from RCU critical section.  */
+ static MemTxResult flatview_write(FlatView *fv, hwaddr addr, MemTxAttrs attrs,
+                                   const void *buf, hwaddr len)
+@@ -3319,6 +3356,32 @@ static MemTxResult flatview_write(FlatView *fv, hwaddr addr, MemTxAttrs attrs,
+     if (!flatview_access_allowed(mr, attrs, mr_addr, l)) {
+         return MEMTX_ACCESS_ERROR;
+     }
++    /*
++     * A RAM write that reached here did not come from the guest CPU running
++     * under this accelerator -- the engine stores straight into host memory --
++     * so it is a device DMA, a monitor write or migration.  The engine has to
++     * hear about it or it keeps executing translations of bytes that just
++     * changed: the DMA->self-modifying-code hole.
++     *
++     * This is one of TWO hooks, and the smaller one.  It covers devices that
++     * use dma_memory_write/read (which land in address_space_write/read), the
++     * monitor, and migration.  It does NOT cover the virtio data plane:
++     * virtqueue_map_desc() calls dma_memory_map(), gets a host pointer back
++     * from address_space_map(), and the backend memcpy()s into it -- no write
++     * hook runs anywhere.  That path is caught in address_space_unmap()
++     * instead; see henge_dma_unmap_written() there.
++     *
++     * The DIRTY_MEMORY_CODE path in invalidate_and_set_dirty() is not an
++     * option either: it asserts tcg_enabled(), and here `addr` is still the
++     * guest physical address the engine keys its pages by, which is what the
++     * engine actually wants.
++     *
++     * Guarded on RAM, so MMIO writes never reach the engine's table lookup.
++     */
++    if (henge_enabled() && memory_access_is_direct(mr, true, attrs)) {
++        hv_engine_dma_written(henge_accel_machine(), addr, l);
++        henge_dma_account(false, l);
++    }
+     return flatview_write_continue(fv, addr, attrs, buf, len,
+                                    mr_addr, l, mr);
+ }
+@@ -3779,6 +3842,53 @@ void address_space_unmap(AddressSpace *as, void *buffer, hwaddr len,
+     mr = memory_region_from_host(buffer, &addr1);
+     if (mr != NULL) {
+         if (is_write) {
++            /*
++             * The DMA->self-modifying-code hook that actually covers virtio.
++             *
++             * A device that used dma_memory_map() wrote into `buffer` with a
++             * plain memcpy: no write hook ran, and the engine is still holding
++             * translations of those bytes.  This is the only point in the
++             * lifetime of the mapping that knows both the pointer and how much
++             * of it the device actually touched, so it is where the engine has
++             * to be told.  The pointer->PA lookup is QEMU's own
++             * qemu_ram_block_from_host() (below), not a hand-rolled scan:
++             * a memfd/file-backed block is mapped outside the window the
++             * accelerator recorded at mirror time, so range scanning missed
++             * it silently and left a stale translation behind.
++             *
++             * Order matters: invalidate first, then let
++             * invalidate_and_set_dirty() update the migration bitmap.  That
++             * function is not a substitute for this call -- its
++             * DIRTY_MEMORY_CODE branch (the one that could invalidate code) is
++             * asserted TCG-only, and under henge the mask is zero anyway, so
++             * the engine would never hear about the write.
++             */
++            if (henge_enabled()) {
++                /*
++                 * Use QEMU's own reverse map instead of scanning host pointer
++                 * ranges by hand.  qemu_ram_block_from_host() is the
++                 * authoritative answer for "which RAMBlock does this pointer
++                 * belong to, and at what offset", and it is what every other
++                 * device model in the tree uses (virtio-balloon, virtio-gpu,
++                 * hv-balloon).
++                 */
++                if (getenv("HV_DMA_DEBUG")) {
++                    RAMBlock *dbg_rb;
++                    ram_addr_t dbg_off = 0;
++
++                    dbg_rb = qemu_ram_block_from_host(buffer, false, &dbg_off);
++                    fprintf(stderr,
++                            "DMAhost mr=%s addr1=0x%" PRIx64
++                            " rb->offset=0x%" PRIx64 " rb_off=0x%" PRIx64
++                            " len=0x%" PRIx64 "\n",
++                            mr->name, (uint64_t)addr1,
++                            dbg_rb ? (uint64_t)dbg_rb->offset : 0,
++                            (uint64_t)dbg_off, (uint64_t)access_len);
++                }
++                if (hv_engine_dma_written_mr(mr, addr1, access_len)) {
++                    henge_dma_account(true, access_len);
++                }
++            }
+             invalidate_and_set_dirty(mr, addr1, access_len);
+         }
+         if (xen_map_cache_enabled()) {
+diff --git a/target/arm/cpu-max.c b/target/arm/cpu-max.c
+index 88b7c04633..5025c01112 100644
+--- a/target/arm/cpu-max.c
++++ b/target/arm/cpu-max.c
+@@ -13,6 +13,7 @@
+ #include "system/kvm.h"
+ #include "system/qtest.h"
+ #include "system/tcg.h"
++#include "system/henge-accel.h"
+ #include "target/arm/internals.h"
+ #include "target/arm/cpregs.h"
+ 
+@@ -203,7 +204,19 @@ static void cpu_max_initfn(Object *obj)
+         return;
+     }
+ 
+-    if (tcg_enabled() || qtest_enabled()) {
++    /*
++     * Henge belongs on this branch, not on the hwaccel one: it is a software
++     * translator, so there is no host CPU to model (aarch64_host_initfn would
++     * be wrong) and aarch64_aa32_a57_init is exactly the right baseline.
++     *
++     * Leaving it out was not a cosmetic omission -- the whole function body is
++     * gated here, so `-cpu max` under henge produced a CPU with *every* feature
++     * bit clear, including AARCH64.  arm_cpu_realizefn() then took the
++     * "1K pages" path and refused to start with "This CPU requires a smaller
++     * page size than the system is using".  The message named the symptom and
++     * pointed nowhere near this line.
++     */
++    if (tcg_enabled() || qtest_enabled() || henge_enabled()) {
+         aarch64_aa32_a57_init(obj, !aarch64_enabled);
+     }
+ 
+diff --git a/target/arm/cpu.c b/target/arm/cpu.c
+index 787e4dc7ab..c1264f61fa 100644
+--- a/target/arm/cpu.c
++++ b/target/arm/cpu.c
+@@ -24,6 +24,7 @@
+ #include "qemu/log.h"
+ #include "exec/page-vary.h"
+ #include "system/whpx.h"
++#include "system/henge-accel.h"
+ #include "target/arm/tcg/idau.h"
+ #include "qemu/module.h"
+ #include "qapi/error.h"
+@@ -806,6 +807,14 @@ void arm_emulate_firmware_reset(CPUState *cpustate, int target_el)
+ 
+ 
+ #ifndef CONFIG_USER_ONLY
++/* 加速器钩子（O1）：每一次电平变化（升/降）都通知 owner 侧的消费者标记。
++   默认 NULL：TCG/KVM 不装，零开销；henge 在 accel 初始化时注册。 */
++void (*arm_irq_line_hook)(CPUState *cs, int irq, int level);
++void arm_set_irq_line_hook(void (*fn)(CPUState *cs, int irq, int level))
++{
++    arm_irq_line_hook = fn;
++}
++
+ static void arm_cpu_set_irq(void *opaque, int irq, int level)
+ {
+     ARMCPU *cpu = opaque;
+@@ -830,11 +839,25 @@ static void arm_cpu_set_irq(void *opaque, int irq, int level)
+         return;
+     }
+ 
++    {
++        static int t = -1;
++        if (t < 0) t = getenv("HENGE_IRQ_LINE_TRACE") != NULL;
++        if (t && (irq == ARM_CPU_IRQ || irq == ARM_CPU_FIQ))
++            fprintf(stderr, "henge-line: t=%lldus cpu%u irq=%d level=%d prev=%llx -> %llx pc=%llx\n",
++                    (long long)g_get_monotonic_time(), cs->cpu_index, irq, level,
++                    (unsigned long long)env->irq_line_state,
++                    (unsigned long long)(level ? (env->irq_line_state | mask[irq])
++                                               : (env->irq_line_state & ~mask[irq])),
++                    (unsigned long long)env->pc);
++    }
+     if (level) {
+         env->irq_line_state |= mask[irq];
+     } else {
+         env->irq_line_state &= ~mask[irq];
+     }
++    if (arm_irq_line_hook) {
++        arm_irq_line_hook(cs, irq, level);
++    }
+ 
+     switch (irq) {
+     case ARM_CPU_VIRQ:
+@@ -1289,8 +1312,8 @@ static void arm_cpu_initfn(Object *obj)
+     }
+     cpu->kvm_target = QEMU_KVM_ARM_TARGET_NONE;
+ 
+-    if (tcg_enabled() || hvf_enabled()) {
+-        /* TCG and HVF implement PSCI 1.1 */
++    if (tcg_enabled() || hvf_enabled() || henge_enabled()) {
++        /* TCG, HVF and Hv implement PSCI 1.1 */
+         cpu->psci_version = QEMU_PSCI_VERSION_1_1;
+     } else if (whpx_enabled()) {
+         cpu->psci_version = QEMU_PSCI_VERSION_1_3;
+@@ -2145,6 +2168,14 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
+              */
+             error_setg(errp, "This CPU requires a smaller page size "
+                        "than the system is using");
++            /*
++             * The message on its own says nothing about *which* feature bit
++             * put us on the 1K path, and the answer has been needed twice.
++             * A CPU reaching here with V7 set but pagebits still 10 would mean
++             * the feature bits disagree with themselves; without V7 it is a
++             * model that genuinely wants tiny pages.  Print the bits, not the
++             * conclusion.
++             */
+             return;
+         }
+     }
+diff --git a/target/arm/helper.c b/target/arm/helper.c
+index 4ed91ac85a..f2032f68cc 100644
+--- a/target/arm/helper.c
++++ b/target/arm/helper.c
+@@ -39,6 +39,7 @@
+ static void switch_mode(CPUARMState *env, int mode);
+ #ifndef CONFIG_USER_ONLY
+ static void gt_recalc_timer(ARMCPU *cpu, int timeridx);
++static int64_t henge_dl_ns[8];   /* 最近一次 arm 的 deadline（ns） */
+ #endif
+ 
+ int compare_u64(const void *a, const void *b)
+@@ -1373,6 +1374,9 @@ static void gt_update_gicv5_ppi(CPUARMState *env, int timeridx, bool level)
+     gicv5_update_ppi_state(env, timeridx_to_ppi[timeridx], level);
+ }
+ 
++static const char *gt_src_label;
++static void gt_set_src(const char *s) { gt_src_label = s; }
++
+ static void gt_update_irq(ARMCPU *cpu, int timeridx)
+ {
+     CPUARMState *env = &cpu->env;
+@@ -1396,6 +1400,11 @@ static void gt_update_irq(ARMCPU *cpu, int timeridx)
+      * (whichever of the two mechanisms is unused will do nothing)
+      */
+     gt_update_gicv5_ppi(env, timeridx, irqstate);
++    if (getenv("HENGE_VTIMER_TRACE") && timeridx == GTIMER_VIRT)
++        fprintf(stderr, "henge-vtimer: t=%lldus cpu=%d idx=%d istatus=%d src=%s\n",
++                (long long)g_get_monotonic_time(),
++                current_cpu ? (int)current_cpu->cpu_index : -1, timeridx, irqstate,
++                gt_src_label ? gt_src_label : "?");
+     qemu_set_irq(cpu->gt_timer_outputs[timeridx], irqstate);
+     trace_arm_gt_update_irq(timeridx, irqstate);
+ }
+@@ -1558,6 +1567,12 @@ static void gt_recalc_timer(ARMCPU *cpu, int timeridx)
+         timer_del(cpu->gt_timer[timeridx]);
+         trace_arm_gt_recalc_disabled(timeridx);
+     }
++    {
++        int ci = CPU(cpu)->cpu_index;
++        if (ci >= 0 && ci < 8) {
++            henge_dl_ns[ci] = timer_expire_time_ns(cpu->gt_timer[timeridx]);
++        }
++    }
+     gt_update_irq(cpu, timeridx);
+ }
+ 
+@@ -1569,6 +1584,7 @@ static void gt_timer_reset(CPUARMState *env, const ARMCPRegInfo *ri,
+     timer_del(cpu->gt_timer[timeridx]);
+ }
+ 
++
+ static uint64_t gt_cnt_read(CPUARMState *env, const ARMCPRegInfo *ri)
+ {
+     uint64_t offset = gt_direct_access_timer_offset(env, GTIMER_PHYS);
+@@ -1586,6 +1602,7 @@ static void gt_cval_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                           uint64_t value)
+ {
+     trace_arm_gt_cval_write(timeridx, value);
++    gt_set_src("cval");
+     env->cp15.c14_timer[timeridx].cval = value;
+     gt_recalc_timer(env_archcpu(env), timeridx);
+ }
+@@ -1618,7 +1635,12 @@ static void gt_tval_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                           uint64_t value)
+ {
+     uint64_t offset = gt_direct_access_timer_offset(env, timeridx);
++    if (getenv("HV_CVAL_COUNT"))
++        fprintf(stderr, "henge-gttval: cpu%d idx=%d val=%llx pc=%llx\n",
++                current_cpu ? (int)current_cpu->cpu_index : -1, timeridx,
++                (unsigned long long)value, (unsigned long long)env->pc);
+ 
++    gt_set_src("tval");
+     do_tval_write(env, timeridx, value, offset);
+ }
+ 
+@@ -1630,6 +1652,7 @@ static void gt_ctl_write(CPUARMState *env, const ARMCPRegInfo *ri,
+     uint32_t oldval = env->cp15.c14_timer[timeridx].ctl;
+ 
+     trace_arm_gt_ctl_write(timeridx, value);
++    gt_set_src("ctl");
+     env->cp15.c14_timer[timeridx].ctl = deposit64(oldval, 0, 2, value);
+     if ((oldval ^ value) & 1) {
+         /* Enable toggled */
+@@ -2024,6 +2047,25 @@ void arm_gt_vtimer_cb(void *opaque)
+ {
+     ARMCPU *cpu = opaque;
+ 
++    if (getenv("HENGE_FIRE_STATS")) {
++        /* fire_late = actual − wall deadline（同域相减：expire_time 已是 ns）。 */
++        static uint64_t n, sum, max, hist[4];
++        int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++        int ci = CPU(cpu)->cpu_index;
++        int64_t dl = (ci >= 0 && ci < 8) ? henge_dl_ns[ci] : 0;
++        int64_t late = now - dl;
++        if (late < 0) late = 0;
++        n++; sum += (uint64_t)late; if ((uint64_t)late > max) max = (uint64_t)late;
++        hist[late < 100000 ? 0 : late < 1000000 ? 1 : late < 5000000 ? 2 : 3]++;
++        if ((n % 256) == 0)
++            fprintf(stderr, "henge-fire: n=%llu avg=%lluus max=%lluus "
++                    "hist(<0.1/1/5/>=5ms)=%llu/%llu/%llu/%llu\n",
++                    (unsigned long long)n, (unsigned long long)(sum / n / 1000),
++                    (unsigned long long)(max / 1000),
++                    (unsigned long long)hist[0], (unsigned long long)hist[1],
++                    (unsigned long long)hist[2], (unsigned long long)hist[3]);
++    }
++    gt_set_src("expiry");
+     gt_recalc_timer(cpu, GTIMER_VIRT);
+ }
+ 
+diff --git a/target/arm/internals.h b/target/arm/internals.h
+index 4026f67579..e5a02a94a5 100644
+--- a/target/arm/internals.h
++++ b/target/arm/internals.h
+@@ -1982,6 +1982,8 @@ int delete_gdbstub_hw_watchpoint(vaddr addr, vaddr len, GdbBreakpointType type);
+ 
+ /* Return the current value of the system counter in ticks */
+ uint64_t gt_get_countervalue(CPUARMState *env);
++
++
+ /*
+  * Return the currently applicable offset between the system counter
+  * and the counter for the specified timer, as used for direct register
+diff --git a/ui/ui-hmp-cmds.c b/ui/ui-hmp-cmds.c
+index 06f4030ce4..cc160251d3 100644
+--- a/ui/ui-hmp-cmds.c
++++ b/ui/ui-hmp-cmds.c
+@@ -26,6 +26,9 @@
+ #include "qemu/cutils.h"
+ #include "ui/console.h"
+ #include "ui/input.h"
++#include "hw/core/cpu.h"
++#include "system/henge-accel.h"
++#include "system/henge-engine.h"
+ 
+ static int mouse_button_state;
+ 
+@@ -53,6 +56,119 @@ void hmp_mouse_move(Monitor *mon, const QDict *qdict)
+     qemu_input_event_sync();
+ }
+ 
++/*
++ * mouse_abs x y —— 把光标放到**绝对屏幕坐标** (x, y)。
++ *
++ * 为什么需要它：HMP 原有的 mouse_move 走的是 qemu_input_queue_rel()，
++ * 参数是**相对位移量**而非坐标（见 hmp_mouse_move 实现）。
++ * 用它去"点某个控件"必须自己累积偏移，而且一旦累计错了就无法纠正 ——
++ * 实测想点列表第 5 项，多发几次后光标永远停在末尾。
++ *
++ * 绝对坐标只有 QMP 的 input-send-event 能做，但 HMP 里没有对应命令
++ * （本二进制也未编入 input-send-event）。所以这里补一条。
++ *
++ * 坐标用**屏幕像素**，内部按当前 console 分辨率缩放到 0..0x7FFF，
++ * 这样调用方不需要知道 QEMU 内部的定标。
++ */
++void hmp_mouse_abs(Monitor *mon, const QDict *qdict)
++{
++    QemuConsole *con = qemu_console_lookup_default();
++    int x = qdict_get_int(qdict, "x");
++    int y = qdict_get_int(qdict, "y");
++    int w, h;
++
++    if (!con) {
++        monitor_printf(mon, "no graphical console\n");
++        return;
++    }
++
++    w = qemu_console_get_width(con, 0);
++    h = qemu_console_get_height(con, 0);
++    if (w <= 0 || h <= 0) {
++        monitor_printf(mon, "console has no size yet (%dx%d)\n", w, h);
++        return;
++    }
++
++    /* 夹到 [0, w-1] / [0, h-1]，越界不报错但也不越界送 */
++    if (x < 0) x = 0;
++    if (y < 0) y = 0;
++    if (x > w - 1) x = w - 1;
++    if (y > h - 1) y = h - 1;
++
++    qemu_input_queue_abs(con, INPUT_AXIS_X, x, 0, w - 1);
++    qemu_input_queue_abs(con, INPUT_AXIS_Y, y, 0, h - 1);
++    qemu_input_event_sync();
++
++    monitor_printf(mon, "mouse_abs %d %d (console %dx%d)\n", x, y, w, h);
++}
++
++/*
++ * The interrupt join, both sides at once.
++ *
++ * henge_sync_irq() copies CPUState.interrupt_request's HARD/FIQ bits into the
++ * engine's two level bytes, and hv_engine_set_irq() is the only writer.  TCG
++ * would also clear those bits in arm_cpu_exec_interrupt() after delivering;
++ * henge delivers inside its own run loop, so nothing on this path ever clears
++ * them -- and nothing lowers the level unless a sync happens to run.
++ *
++ * A guest that stops acking therefore leaves the engine holding a level of 1
++ * with no future event that could refresh it: WFI returns immediately, the run
++ * loop keeps going, hv_run() never comes back out, and the vCPU burns a core
++ * while the guest makes no progress.  Printing both sides is what separates
++ * that from a driver genuinely holding the line high.
++ */
++void hmp_henge_irq(Monitor *mon, const QDict *qdict)
++{
++    CPUState *cs;
++    int any = 0;
++
++    monitor_printf(mon, "cpu halted  qemu   engine   pstate     pc\n");
++
++    CPU_FOREACH(cs) {
++        int qirq = -1, qfiq = -1, eirq = -1, efiq = -1;
++        uint64_t pc = 0, daif = 0, el = 0;
++
++        henge_irq_report(cs, &qirq, &qfiq);
++        if (cs->opaque) {
++            eirq = hv_engine_get_irq((HvCpu *)cs->opaque, 0);
++            efiq = hv_engine_get_irq((HvCpu *)cs->opaque, 1);
++            hv_engine_get_cpu_state((HvCpu *)cs->opaque, &pc, &daif, &el);
++        }
++
++        monitor_printf(mon, "%3d %6d  %d/%d    %d/%d    el%llu I=%d  %016llx  ",
++                       cs->cpu_index, cs->halted, qirq, qfiq, eirq, efiq,
++                       (unsigned long long)el,
++                       !!(daif & (1u << 7)),
++                       (unsigned long long)pc);
++        /*
++         * park/wake counters: taken as a snapshot, so two samples a few seconds
++         * apart answer the only question that matters when the guest stops
++         * moving -- is it parked and never woken, or never parked at all.
++         */
++        if (!cs->opaque) {
++            monitor_printf(mon, "no engine state\n");
++        } else if (eirq != qirq || efiq != qfiq) {
++            monitor_printf(mon, "STALE: engine holds a level QEMU dropped\n");
++            any = 1;
++        } else if ((qirq == 1 || qfiq == 1) && !(daif & (1u << 7))) {
++            /* The interesting case: line asserted, interrupts unmasked, and the
++             * guest still not taking it.  That is a delivery problem, not a
++             * stale copy, and it is what turns WFI into a spin. */
++            monitor_printf(mon, "ASSERTED+UNMASKED: should have been delivered\n");
++            any = 1;
++        } else if (qirq == 1 || qfiq == 1) {
++            monitor_printf(mon, "asserted, but PSTATE.I masks it\n");
++        } else {
++            monitor_printf(mon, "in sync, lines low\n");
++        }
++    }
++
++    if (any) {
++        monitor_printf(mon, "\nA line the engine sees but the guest never takes means WFI "
++                            "can never block: the vCPU spins at full host speed.\n");
++    }
++}
++
+ void hmp_mouse_button(Monitor *mon, const QDict *qdict)
+ {
+     /* HMP mouse_button bitmask: 1=L, 2=R, 4=M */
+diff --git a/util/oslib-posix.c b/util/oslib-posix.c
+index dc001da66d..5e164872b5 100644
+--- a/util/oslib-posix.c
++++ b/util/oslib-posix.c
+@@ -29,6 +29,12 @@
+ #include "qemu/osdep.h"
+ #include <termios.h>
+ 
++#ifdef __BIONIC__
++/* MFD_CLOEXEC lives here on bionic; memfd_create() itself is declared in
++ * <sys/mman.h>, which osdep.h already pulls in. */
++#include <linux/memfd.h>
++#endif
++
+ #include <glib/gprintf.h>
+ 
+ #include "system/system.h"
+@@ -1010,6 +1016,30 @@ int qemu_shm_alloc(size_t size, Error **errp)
+     g_string_printf(shm_name, "/qemu-" FMT_pid "-shm-%d", getpid(),
+                     cur_sequence);
+ 
++#ifdef __BIONIC__
++    /*
++     * Android's bionic has no POSIX shared memory: <sys/mman.h> declares no
++     * shm_open, and there is no implementation behind it (Android uses
++     * ashmem and, since API 26, memfd).
++     *
++     * memfd is the equivalent, and it is literally what this function wants:
++     * an anonymous object that can be ftruncate()d, mmap()ed and inherited
++     * through an fd.  The POSIX path below calls shm_unlink() right after
++     * creating the object, which says the caller only cares about the fd and
++     * not the name -- and a memfd never has a name to begin with.
++     *
++     * This is also not the preferred path on Android: system/physmem.c tests
++     * qemu_memfd_check() and calls qemu_memfd_create() when it passes; only a
++     * failure lands here.  Implementing it with memfd rather than returning
++     * "unsupported" keeps that fallback actually able to catch.
++     */
++    fd = memfd_create(shm_name->str, MFD_CLOEXEC);
++    if (fd < 0) {
++        error_setg_errno(errp, errno,
++                         "failed to create anonymous shared memory");
++        return -1;
++    }
++#else
+     fd = shm_open(shm_name->str, oflag, mode);
+     if (fd < 0) {
+         error_setg_errno(errp, errno,
+@@ -1023,6 +1053,7 @@ int qemu_shm_alloc(size_t size, Error **errp)
+      * there are file descriptors pointing to it.
+      */
+     shm_unlink(shm_name->str);
++#endif
+ 
+     if (ftruncate(fd, size) == -1) {
+         error_setg_errno(errp, errno,

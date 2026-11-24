@@ -11,6 +11,13 @@
 
 # ---- 上游子仓库：内容不入库，由 submodule 管 ----
 /src/*/**
+# src/qemu-henge 例外：它是「配方」目录（子模块 + patch + 脚本），内容要入库；
+# 只有派生树 work/ 和子模块 qemu/ 例外。
+!/src/qemu-henge/
+!/src/qemu-henge/**
+# qemu 是指向 ../qemu（子模块）的软链接，要入库；work/ 是派生树，不入库。
+/src/qemu-henge/work/
+
 
 # ---- 可重建产物 ----
 # 解包的 Alpine initramfs（20M / 686 文件，含 .so）：由脚本重建
